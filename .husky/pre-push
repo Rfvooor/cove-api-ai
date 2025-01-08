@@ -1,0 +1,116 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Disable concurrent to ensure sequential execution
+npm_config_concurrency=1
+
+# Color codes for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Log function
+log() {
+    local level="$1"
+    local message="$2"
+    local color=""
+
+    case "$level" in
+        "INFO")
+            color=$GREEN
+            ;;
+        "WARN")
+            color=$YELLOW
+            ;;
+        "ERROR")
+            color=$RED
+            ;;
+        *)
+            color=$NC
+            ;;
+    esac
+
+    echo -e "${color}[${level}] ${message}${NC}"
+}
+
+# Pre-push checks
+pre_push_checks() {
+    log "INFO" "Running pre-push checks..."
+
+    # Run comprehensive test suite
+    log "INFO" "Running full test suite..."
+    pnpm test:integration
+
+    # Run performance benchmarks
+    log "INFO" "Running performance benchmarks..."
+    pnpm benchmark
+
+    # Run security vulnerability scan
+    log "INFO" "Scanning for security vulnerabilities..."
+    pnpm audit --audit-level high
+
+    # Check bundle size and optimization
+    log "INFO" "Checking bundle size and optimization..."
+    pnpm size-limit
+
+    # Generate and validate documentation
+    log "INFO" "Generating documentation..."
+    pnpm docs:generate
+
+    log "INFO" "Validating documentation links..."
+    pnpm docs:validate
+
+    # Run type coverage check
+    log "INFO" "Checking TypeScript type coverage..."
+    pnpm tsc --noEmit
+    npx type-coverage --at-least 90 --strict --ignore-catch
+
+    # Optional: Run mutation testing for advanced test coverage
+    log "INFO" "Running mutation tests..."
+    pnpm test:mutation
+}
+
+# Release preparation checks
+release_preparation_checks() {
+    log "INFO" "Preparing release checks..."
+
+    # Check if all required environment variables are set
+    log "INFO" "Validating release environment..."
+    if [ -z "$GITHUB_TOKEN" ] || [ -z "$NPM_TOKEN" ]; then
+        log "ERROR" "Release tokens are not set. Cannot proceed with release."
+        return 1
+    fi
+
+    # Run release-please dry run
+    log "INFO" "Running release-please dry run..."
+    pnpm release --dry-run
+}
+
+# Main execution
+main() {
+    log "INFO" "🚀 Starting Pre-Push Checks 🚀"
+
+    # Execute pre-push checks
+    if pre_push_checks; then
+        log "INFO" "✅ Pre-push checks passed successfully!"
+        
+        # Optional: Run release preparation checks
+        if release_preparation_checks; then
+            log "INFO" "✅ Release preparation checks passed!"
+            exit 0
+        else
+            log "WARN" "⚠️ Release preparation checks failed. Proceed with caution."
+            exit 0
+        fi
+    else
+        log "ERROR" "❌ Pre-push checks failed. Please fix the issues before pushing."
+        exit 1
+    fi
+}
+
+# Trap signals for clean exit
+trap 'log "WARN" "Pre-push checks interrupted."; exit 1' SIGINT SIGTERM
+
+# Execute main function
+main

@@ -1,0 +1,79 @@
+# Development Dockerfile for Cove API AI
+
+# Base stage with Node.js and development tools
+FROM node:20-alpine AS base
+LABEL org.opencontainers.image.source=https://github.com/your-org/cove-api-ai
+LABEL org.opencontainers.image.description="Cove API AI - Development Image"
+LABEL org.opencontainers.image.licenses=MIT
+
+# Install system dependencies and development tools
+RUN apk add --no-cache \
+    libc6-compat \
+    git \
+    curl \
+    bash \
+    python3 \
+    openssl \
+    build-base \
+    gcc \
+    wget \
+    ca-certificates
+
+# Install global development dependencies
+RUN npm install -g \
+    pnpm \
+    tsx \
+    nodemon \
+    ts-node \
+    @types/node \
+    typescript \
+    npm-check-updates
+
+# Set working directory
+WORKDIR /app
+
+# Copy package management files
+COPY package.json pnpm-lock.yaml ./
+
+# Install all dependencies (including dev)
+RUN pnpm install --frozen-lockfile
+
+# Copy entire project
+COPY . .
+
+# Generate development SSL certificates
+RUN mkdir -p /app/certs && \
+    openssl req -x509 -newkey rsa:4096 \
+    -keyout /app/certs/dev-key.pem \
+    -out /app/certs/dev-cert.pem \
+    -days 365 \
+    -nodes \
+    -subj "/C=US/ST=Development/L=DevCity/O=DevOrg/OU=DevTeam/CN=localhost"
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S coveai -u 1001
+
+# Set ownership and permissions
+RUN chown -R coveai:nodejs /app
+USER coveai
+
+# Expose development ports
+EXPOSE 4000 9229 6006
+
+# Development environment configuration
+ENV NODE_ENV=development
+ENV LOG_LEVEL=debug
+ENV DEBUG=coveai:*
+
+# Development startup script
+CMD ["pnpm", "dev:debug"]
+
+# Optional: Add metadata labels
+LABEL maintainer="Your Name <your.email@example.com>"
+LABEL version="0.1.0-dev"
+LABEL description="Multi-Agent AI Framework Development Environment"
+
+# Development-specific health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:4000/health || exit 1

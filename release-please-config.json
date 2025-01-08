@@ -1,0 +1,94 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "packages": {
+    ".": {
+      "changelog-path": "CHANGELOG.md",
+      "release-type": "node",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "draft": false,
+      "prerelease": false
+    }
+  },
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "group-name": "cove-api-ai"
+    }
+  ],
+  "extra-files": [
+    {
+      "type": "json",
+      "path": "package.json",
+      "jsonpath": "$.version"
+    },
+    {
+      "type": "json",
+      "path": "package.json",
+      "jsonpath": "$.dependencies.['@cove-api-ai/core']"
+    }
+  ],
+  "branch-labels": [
+    "release/v${major}.${minor}"
+  ],
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "🚀 Features",
+      "hidden": false
+    },
+    {
+      "type": "fix",
+      "section": "🐛 Bug Fixes",
+      "hidden": false
+    },
+    {
+      "type": "docs",
+      "section": "📖 Documentation",
+      "hidden": false
+    },
+    {
+      "type": "refactor",
+      "section": "🔧 Refactoring",
+      "hidden": false
+    },
+    {
+      "type": "perf",
+      "section": "⚡ Performance Improvements",
+      "hidden": false
+    },
+    {
+      "type": "test",
+      "section": "🧪 Tests",
+      "hidden": false
+    },
+    {
+      "type": "build",
+      "section": "🏗️ Build System",
+      "hidden": false
+    },
+    {
+      "type": "ci",
+      "section": "🤖 Continuous Integration",
+      "hidden": false
+    }
+  ],
+  "release-notes-section-order": [
+    "🚀 Features",
+    "🐛 Bug Fixes",
+    "📖 Documentation",
+    "🔧 Refactoring",
+    "⚡ Performance Improvements",
+    "🧪 Tests",
+    "🏗️ Build System",
+    "🤖 Continuous Integration"
+  ],
+  "pull-request-title-pattern": "chore(release): ${version}",
+  "pull-request-header": "# Automated Release Notes",
+  "pull-request-footer": "🌊🤖 Powered by Cove API AI Release Automation",
+  "group-pull-request-title-pattern": "chore(release): ${group}",
+  "separate-pull-requests": true,
+  "tag-separator": "-v",
+  "versioning-strategy": "default"
+}

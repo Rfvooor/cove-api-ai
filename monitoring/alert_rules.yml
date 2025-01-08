@@ -1,0 +1,153 @@
+groups:
+- name: coveai_infrastructure_alerts
+  rules:
+  # High CPU Usage Alert
+  - alert: HighCPUUsage
+    expr: node_cpu_seconds_total{mode!="idle"} / node_cpu_seconds_total{mode="idle"} * 100 > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High CPU Usage Detected"
+      description: "CPU usage is above 80% for more than 5 minutes on {{ $labels.instance }}"
+
+  # High Memory Usage Alert
+  - alert: HighMemoryUsage
+    expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High Memory Usage Detected"
+      description: "Memory usage is above 85% for more than 5 minutes on {{ $labels.instance }}"
+
+  # Disk Space Low Alert
+  - alert: LowDiskSpace
+    expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100 < 10
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Low Disk Space"
+      description: "Available disk space is less than 10% on {{ $labels.instance }}"
+
+- name: coveai_application_alerts
+  rules:
+  # High Error Rate Alert
+  - alert: HighErrorRate
+    expr: sum(rate(http_request_duration_seconds_count{status=~"5.."}[5m])) / sum(rate(http_request_duration_seconds_count[5m])) * 100 > 5
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High Error Rate Detected"
+      description: "Error rate is above 5% for more than 10 minutes"
+
+  # Slow Response Time Alert
+  - alert: SlowResponseTime
+    expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Slow Response Time"
+      description: "95th percentile response time is above 2 seconds for more than 5 minutes"
+
+  # Agent Execution Timeout Alert
+  - alert: AgentExecutionTimeout
+    expr: sum(coveai_agent_execution_timeout_total) > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Multiple Agent Execution Timeouts"
+      description: "More than 10 agent executions have timed out in the last 5 minutes"
+
+- name: coveai_database_alerts
+  rules:
+  # PostgreSQL Connection Alert
+  - alert: PostgreSQLConnectionHigh
+    expr: pg_stat_database_numbackends > 50
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High PostgreSQL Connections"
+      description: "Number of PostgreSQL connections exceeds 50 for more than 10 minutes"
+
+  # Redis Memory Usage Alert
+  - alert: RedisHighMemoryUsage
+    expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High Redis Memory Usage"
+      description: "Redis memory usage is above 80% for more than 5 minutes"
+
+- name: coveai_vector_database_alerts
+  rules:
+  # ChromaDB Performance Alert
+  - alert: ChromaDBSlowQueries
+    expr: chroma_query_duration_seconds{quantile="0.95"} > 1
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Slow ChromaDB Queries"
+      description: "95th percentile of ChromaDB query duration is above 1 second for more than 5 minutes"
+
+- name: coveai_language_model_alerts
+  rules:
+  # OpenAI API Error Rate Alert
+  - alert: OpenAIHighErrorRate
+    expr: sum(rate(openai_api_errors_total[5m])) / sum(rate(openai_api_requests_total[5m])) * 100 > 5
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High OpenAI API Error Rate"
+      description: "OpenAI API error rate is above 5% for more than 10 minutes"
+
+  # OpenRouter API Latency Alert
+  - alert: OpenRouterHighLatency
+    expr: histogram_quantile(0.95, rate(openrouter_api_request_duration_seconds_bucket[5m])) > 3
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High OpenRouter API Latency"
+      description: "95th percentile of OpenRouter API request duration is above 3 seconds for more than 5 minutes"
+
+- name: coveai_system_health
+  rules:
+  # System Uptime Alert
+  - alert: SystemRecentRestart
+    expr: time() - node_boot_time_seconds < 300
+    labels:
+      severity: info
+    annotations:
+      summary: "System Recently Restarted"
+      description: "System has been running for less than 5 minutes"
+
+  # Prometheus Target Scrape Failure
+  - alert: PrometheusScrapeFailure
+    expr: up == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Prometheus Target Scrape Failure"
+      description: "Prometheus is unable to scrape metrics from {{ $labels.instance }}"
+
+# Global Alert Configuration
+global:
+  resolve_timeout: 5m
+
+# Inhibition Rules
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']

@@ -1,0 +1,113 @@
+groups:
+- name: coveai_infrastructure_recording_rules
+  interval: 15s
+  rules:
+  # CPU Usage Recording Rules
+  - record: coveai_cpu_usage_percent
+    expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+  # Memory Usage Recording Rules
+  - record: coveai_memory_usage_percent
+    expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+
+  # Disk Space Usage Recording Rules
+  - record: coveai_disk_usage_percent
+    expr: 100 * (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})
+
+- name: coveai_application_recording_rules
+  interval: 15s
+  rules:
+  # HTTP Request Rate Recording Rules
+  - record: coveai_http_request_rate_per_minute
+    expr: sum(rate(http_request_duration_seconds_count[5m])) * 60
+
+  # HTTP Error Rate Recording Rules
+  - record: coveai_http_error_rate_percent
+    expr: sum(rate(http_request_duration_seconds_count{status=~"5.."}[5m])) / sum(rate(http_request_duration_seconds_count[5m])) * 100
+
+  # Response Time Recording Rules
+  - record: coveai_http_response_time_95th_percentile
+    expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
+
+  # Agent Execution Recording Rules
+  - record: coveai_agent_execution_total
+    expr: sum(coveai_agent_execution_total)
+
+  - record: coveai_agent_execution_success_rate
+    expr: sum(coveai_agent_execution_success_total) / sum(coveai_agent_execution_total) * 100
+
+- name: coveai_database_recording_rules
+  interval: 15s
+  rules:
+  # PostgreSQL Connection Recording Rules
+  - record: coveai_postgresql_connection_count
+    expr: pg_stat_database_numbackends
+
+  # Redis Memory Usage Recording Rules
+  - record: coveai_redis_memory_usage_percent
+    expr: redis_memory_used_bytes / redis_memory_max_bytes * 100
+
+  # Database Query Latency Recording Rules
+  - record: coveai_database_query_latency_95th_percentile
+    expr: histogram_quantile(0.95, rate(pg_stat_statements_total_time_seconds_bucket[5m]))
+
+- name: coveai_vector_database_recording_rules
+  interval: 15s
+  rules:
+  # ChromaDB Query Performance Recording Rules
+  - record: coveai_chroma_query_latency_95th_percentile
+    expr: histogram_quantile(0.95, rate(chroma_query_duration_seconds_bucket[5m]))
+
+  - record: coveai_chroma_query_total
+    expr: sum(chroma_query_total)
+
+- name: coveai_language_model_recording_rules
+  interval: 15s
+  rules:
+  # OpenAI API Performance Recording Rules
+  - record: coveai_openai_api_request_rate
+    expr: sum(rate(openai_api_requests_total[5m])) * 60
+
+  - record: coveai_openai_api_error_rate_percent
+    expr: sum(rate(openai_api_errors_total[5m])) / sum(rate(openai_api_requests_total[5m])) * 100
+
+  # OpenRouter API Performance Recording Rules
+  - record: coveai_openrouter_api_request_latency_95th_percentile
+    expr: histogram_quantile(0.95, rate(openrouter_api_request_duration_seconds_bucket[5m]))
+
+- name: coveai_system_health_recording_rules
+  interval: 15s
+  rules:
+  # System Uptime Recording Rules
+  - record: coveai_system_uptime_seconds
+    expr: time() - node_boot_time_seconds
+
+  # Prometheus Target Health Recording Rules
+  - record: coveai_prometheus_target_up
+    expr: up
+
+  # Process Resource Usage Recording Rules
+  - record: coveai_process_cpu_usage_percent
+    expr: 100 * sum(rate(process_cpu_seconds_total[5m]))
+
+  - record: coveai_process_memory_usage_bytes
+    expr: process_resident_memory_bytes
+
+- name: coveai_agent_performance_recording_rules
+  interval: 15s
+  rules:
+  # Agent Execution Time Recording Rules
+  - record: coveai_agent_execution_time_95th_percentile
+    expr: histogram_quantile(0.95, rate(coveai_agent_execution_duration_seconds_bucket[5m]))
+
+  # Agent Task Complexity Recording Rules
+  - record: coveai_agent_task_complexity_average
+    expr: avg(coveai_agent_task_complexity)
+
+  # Agent Memory Usage Recording Rules
+  - record: coveai_agent_memory_usage_bytes
+    expr: sum(coveai_agent_memory_usage_bytes)
+
+# Global Recording Rules Configuration
+global:
+  evaluation_interval: 15s

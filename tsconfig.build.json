@@ -1,0 +1,64 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Build-specific configurations
+    "removeComments": true,
+    "preserveConstEnums": false,
+    "stripInternal": true,
+    "noEmit": false,
+
+    // Optimization for production build
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+
+    // Stricter production settings
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  },
+
+  // Specific include/exclude for build
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "examples/**/*.ts",
+    "tests/**/*.ts"
+  ],
+
+  // Compiler options for different output formats
+  "compileOnSave": false,
+  "buildOptions": {
+    "verbose": true,
+    "diagnostics": true
+  },
+
+  // Advanced build configurations
+  "typedocOptions": {
+    "entryPoints": ["src/index.ts"],
+    "out": "docs",
+    "excludePrivate": true,
+    "excludeProtected": true,
+    "readme": "README.md",
+    "mode": "file"
+  },
+
+  // Performance optimization
+  "watchOptions": {
+    "watchFile": "useFsEvents",
+    "watchDirectory": "useFsEvents",
+    "fallbackPolling": "dynamicPriority",
+    "synchronousWatchDirectory": true,
+    "excludeDirectories": [
+      "**/node_modules",
+      "**/.git",
+      "**/dist"
+    ]
+  }
+}

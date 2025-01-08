@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "baseUrl": "./src",
+    "paths": {
+      "*": ["./*"],
+      "@integrations/*": ["./integrations/*"],
+      "@core/*": ["./core/*"],
+      "@utils/*": ["./utils/*"],
+      "@types/*": ["./types/*"]
+    },
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

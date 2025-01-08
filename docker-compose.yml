@@ -1,0 +1,172 @@
+version: '3.9'
+
+# Common environment configuration
+x-common-env: &common-env
+  NODE_ENV: development
+  LOG_LEVEL: debug
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+# Shared network configuration
+x-networks: &default-networks
+  networks:
+    - cove-network
+
+services:
+  # Main application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: cove-api-ai-dev
+    ports:
+      - "4000:4000"
+      - "9229:9229"  # Node.js debug port
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      <<: *common-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/coveai
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-}
+      PINECONE_ENVIRONMENT: ${PINECONE_ENVIRONMENT:-us-west1-gcp}
+    depends_on:
+      - postgres
+      - redis
+      - chroma
+      - jaeger
+    <<: *default-networks
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: cove-postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: coveai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    <<: *default-networks
+
+  # Redis Cache and Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: cove-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    <<: *default-networks
+
+  # ChromaDB Vector Database
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: cove-chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    <<: *default-networks
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: cove-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    <<: *default-networks
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:9.5.3
+    container_name: cove-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=coveai-admin
+    <<: *default-networks
+
+  # Jaeger Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.45
+    container_name: cove-jaeger
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    <<: *default-networks
+
+  # Optional: Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: cove-node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    <<: *default-networks
+
+# Persistent volume configurations
+volumes:
+  postgres-data:
+  redis-data:
+  chroma-data:
+  prometheus-data:
+  grafana-data:
+
+# Network configuration
+networks:
+  cove-network:
+    driver: bridge
+    name: cove-network
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1

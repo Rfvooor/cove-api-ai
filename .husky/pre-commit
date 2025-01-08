@@ -1,0 +1,84 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Disable concurrent to ensure sequential execution
+npm_config_concurrency=1
+
+# Color codes for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Log function
+log() {
+    local level="$1"
+    local message="$2"
+    local color=""
+
+    case "$level" in
+        "INFO")
+            color=$GREEN
+            ;;
+        "WARN")
+            color=$YELLOW
+            ;;
+        "ERROR")
+            color=$RED
+            ;;
+        *)
+            color=$NC
+            ;;
+    esac
+
+    echo -e "${color}[${level}] ${message}${NC}"
+}
+
+# Pre-commit checks
+pre_commit_checks() {
+    log "INFO" "Running pre-commit checks..."
+
+    # Run linters
+    log "INFO" "Running ESLint..."
+    pnpm lint
+
+    # Run code formatting check
+    log "INFO" "Checking code formatting..."
+    pnpm format:check
+
+    # Run type checking
+    log "INFO" "Running TypeScript type check..."
+    pnpm tsc --noEmit
+
+    # Run tests
+    log "INFO" "Running unit tests..."
+    pnpm test
+
+    # Check for security vulnerabilities
+    log "INFO" "Checking for security vulnerabilities..."
+    pnpm audit
+
+    # Check bundle size
+    log "INFO" "Checking bundle size..."
+    pnpm size-limit
+}
+
+# Main execution
+main() {
+    log "INFO" "🚀 Starting Pre-Commit Checks 🚀"
+
+    # Execute pre-commit checks
+    if pre_commit_checks; then
+        log "INFO" "✅ All pre-commit checks passed successfully!"
+        exit 0
+    else
+        log "ERROR" "❌ Pre-commit checks failed. Please fix the issues before committing."
+        exit 1
+    fi
+}
+
+# Trap signals for clean exit
+trap 'log "WARN" "Pre-commit checks interrupted."; exit 1' SIGINT SIGTERM
+
+# Execute main function
+main
