@@ -12,11 +12,6 @@ Cove AI is a sophisticated, flexible multi-agent AI framework designed to enable
 - **Robust Conversation Management**: Advanced memory and context tracking
 - **Scalable Swarm Routing**: Intelligent task distribution and execution
 - **Various Memory Implementations**: Support for different memory implementations (Redis, Postgres, Chroma and more).
-## Installation
-
-```bash
-npm install cove-ai
-```
 
 ## Quick Start
 
