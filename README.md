@@ -93,10 +93,11 @@ npm run dev
 ## 🔧 Core Components
 
 ### Language Models
-- OpenAI: GPT-4, GPT-3.5-turbo
-- Anthropic: Claude-2, Claude-instant
-- Cohere: Command models
-- HuggingFace: Custom deployments
+- OpenAI
+- Anthropic
+- Cohere
+- HuggingFace
+- Openrouter
 
 ### Memory Providers
 - Redis: Short-term, volatile storage
@@ -209,15 +210,6 @@ npm run format
 7. Push to branch (`git push origin feature/amazing-feature`)
 8. Open a Pull Request
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
 ## 📄 License
 
 This project is licensed under the ISC License - see [LICENSE](LICENSE) for details.
-
-## 🌐 Community & Support
-
-- [Discord Community](https://discord.gg/example)
-- [Documentation](https://docs.example.com)
-- [Issue Tracker](https://github.com/yourusername/agent-swarm-platform/issues)
-- Email: support@example.com
