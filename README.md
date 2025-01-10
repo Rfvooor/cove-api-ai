@@ -68,9 +68,6 @@ npm run db:migrate
 
 # Start development server
 npm run dev
-```
-
-See [QUICK-START.md](QUICK-START.md) for detailed setup instructions.
 
 ## 🏗️ Architecture
 
