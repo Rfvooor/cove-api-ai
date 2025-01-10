@@ -53,8 +53,8 @@ A comprehensive platform for building, managing, and orchestrating AI agents and
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/agent-swarm-platform.git
-cd agent-swarm-platform
+git clone [https://github.com/Rfvooor/cove-api-ai.git](https://github.com/Rfvooor/cove-api-ai.git)
+cd cove-api-ai
 
 # Install dependencies
 npm install
