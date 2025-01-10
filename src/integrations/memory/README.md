@@ -1,237 +1,275 @@
-# Memory System
+# Memory Integration System
 
-The memory system provides a flexible and robust way to store, retrieve, and search agent memories across different storage backends. It supports multiple storage solutions with automatic fallback and replication capabilities.
+The Memory Integration System provides a flexible and extensible way to manage agent memory across different storage providers.
 
-## Features
+## 🌟 Features
 
-- Multiple storage backends (PostgreSQL, Redis, ChromaDB, Pinecone)
-- Automatic fallback handling
-- Distributed storage support
-- Vector similarity search
-- Configurable replication
-- Consistency checking
-- Health monitoring
-- Batch operations
-- Type-safe interfaces
+- Multiple storage provider support
+- Automatic data serialization/deserialization
+- Vector embedding for semantic search
+- Configurable retention policies
+- Automatic archival and cleanup
 
-## Storage Backends
-
-### PostgreSQL
-- Primary storage for structured data
-- Full-text search capabilities
-- JSONB support for metadata
-- Vector similarity search using pgvector
+## 🔌 Supported Providers
 
 ### Redis
-- Fast in-memory storage
-- Configurable TTL
-- Great for short-term memory and caching
-- Automatic persistence
+- Fast, in-memory storage
+- Volatile memory with optional persistence
+- Ideal for short-term memory and caching
+- Configurable TTL and memory limits
+
+### PostgreSQL
+- Persistent, relational storage
+- Complex querying capabilities
+- Transaction support
+- Ideal for long-term memory storage
 
 ### ChromaDB
-- Vector database optimized for embeddings
-- Efficient similarity search
+- Vector database for semantic search
+- Metadata filtering
 - Local deployment option
-- Supports hybrid search
+- Efficient similarity search
 
 ### Pinecone
-- Cloud-native vector database
+- Managed vector database service
 - Highly scalable
-- Optimized for production workloads
-- Advanced filtering capabilities
+- Real-time updates
+- Production-ready vector search
 
-## Installation
+## 🛠️ Usage
 
-```bash
-# Install dependencies
-npm install pg redis @pinecone-database/pinecone chromadb
-
-# Optional: Set up local services using Docker
-docker-compose up -d
-```
-
-## Basic Usage
+### Basic Configuration
 
 ```typescript
-import { 
-  MemoryManager, 
-  MemoryEntry,
-  defaultConfigs 
-} from './integrations/memory';
+import { MemoryManager } from './manager';
+import { RedisMemory, PostgresMemory, ChromaMemory, PineconeMemory } from './providers';
 
-// Create a memory manager
-const manager = new MemoryManager({
-  primaryStore: defaultConfigs.postgres,
-  fallbackStores: [defaultConfigs.redis],
-  distributedStores: [defaultConfigs.chroma],
-  replicationEnabled: true
-});
-
-// Initialize the system
-await manager.initialize();
-
-// Store a memory
-const entry: MemoryEntry = {
-  id: 'msg_123',
-  content: 'Hello, world!',
-  type: 'message',
-  role: 'assistant',
-  timestamp: Date.now(),
-  tokenCount: 3,
-  metadata: {
-    conversationId: 'conv_123'
-  }
-};
-
-await manager.add(entry);
-
-// Search for memories
-const results = await manager.search('hello', {
-  limit: 5,
-  filter: { type: 'message' }
-});
-
-// Clean up
-await manager.cleanup();
-```
-
-## Advanced Usage
-
-### Custom Configuration
-
-```typescript
-const manager = new MemoryManager({
-  primaryStore: {
-    type: 'postgres',
-    config: {
-      host: 'custom.host',
-      port: 5432,
-      database: 'memory_db',
-      user: 'user',
-      password: 'password',
-      schema: 'memories',
-      maxConnections: 20
+// Initialize memory manager
+const memoryManager = new MemoryManager({
+  defaultProvider: 'redis',
+  providers: {
+    redis: {
+      url: process.env.REDIS_URL,
+      ttl: 3600,
+      maxMemory: '1gb'
+    },
+    postgres: {
+      connectionString: process.env.POSTGRES_URL,
+      schema: 'agent_memory',
+      tableName: 'memories'
+    },
+    chroma: {
+      path: './chromadb',
+      dimensions: 1536,
+      metric: 'cosine'
+    },
+    pinecone: {
+      apiKey: process.env.PINECONE_API_KEY,
+      environment: process.env.PINECONE_ENV,
+      index: 'agent-memories'
     }
-  },
-  // ... other configurations
-});
-```
-
-### Vector Similarity Search
-
-```typescript
-// Search using embeddings
-const embedding = new Array(1536).fill(0); // Your embedding here
-const results = await manager.similaritySearch(embedding, {
-  limit: 10,
-  minScore: 0.7,
-  filter: {
-    type: 'message'
   }
 });
 ```
 
-### Distributed Storage
+### Provider-Specific Usage
 
+#### Redis Memory
 ```typescript
-const manager = new MemoryManager({
-  primaryStore: defaultConfigs.postgres,
-  distributedStores: [
-    defaultConfigs.chroma,
-    defaultConfigs.pinecone
-  ],
-  replicationEnabled: true,
-  consistencyCheck: true,
-  consistencyCheckInterval: 60000 // 1 minute
+const redisMemory = await memoryManager.getProvider('redis');
+
+// Store memory
+await redisMemory.store({
+  key: 'conversation:123',
+  value: { messages: [...] },
+  ttl: 3600 // 1 hour
+});
+
+// Retrieve memory
+const memory = await redisMemory.retrieve('conversation:123');
+```
+
+#### PostgreSQL Memory
+```typescript
+const pgMemory = await memoryManager.getProvider('postgres');
+
+// Store with metadata
+await pgMemory.store({
+  key: 'task:456',
+  value: { result: '...' },
+  metadata: {
+    agentId: 'agent-123',
+    taskType: 'analysis'
+  }
+});
+
+// Query memories
+const memories = await pgMemory.query({
+  metadata: {
+    agentId: 'agent-123',
+    taskType: 'analysis'
+  },
+  limit: 10,
+  orderBy: 'createdAt'
 });
 ```
 
-### Health Monitoring
+#### ChromaDB Memory
+```typescript
+const chromaMemory = await memoryManager.getProvider('chroma');
+
+// Store with embedding
+await chromaMemory.store({
+  key: 'knowledge:789',
+  value: 'Some text to remember',
+  embedding: [...], // Vector embedding
+  metadata: { topic: 'science' }
+});
+
+// Semantic search
+const similar = await chromaMemory.search({
+  query: 'Related information',
+  filter: { topic: 'science' },
+  limit: 5
+});
+```
+
+#### Pinecone Memory
+```typescript
+const pineconeMemory = await memoryManager.getProvider('pinecone');
+
+// Upsert vectors
+await pineconeMemory.store({
+  vectors: [{
+    id: 'mem:123',
+    values: [...], // Vector embedding
+    metadata: { type: 'fact' }
+  }]
+});
+
+// Query vectors
+const results = await pineconeMemory.query({
+  vector: [...],
+  filter: { type: 'fact' },
+  topK: 10
+});
+```
+
+## 🔧 Configuration Options
+
+### Redis Options
+```typescript
+interface RedisOptions {
+  url: string;
+  ttl?: number;
+  maxMemory?: string;
+  keyPrefix?: string;
+  serializer?: 'json' | 'msgpack';
+}
+```
+
+### PostgreSQL Options
+```typescript
+interface PostgresOptions {
+  connectionString: string;
+  schema?: string;
+  tableName?: string;
+  maxConnections?: number;
+  idleTimeout?: number;
+}
+```
+
+### ChromaDB Options
+```typescript
+interface ChromaOptions {
+  path: string;
+  dimensions: number;
+  metric?: 'cosine' | 'euclidean' | 'dot';
+  autoCleanup?: boolean;
+  cleanupInterval?: number;
+}
+```
+
+### Pinecone Options
+```typescript
+interface PineconeOptions {
+  apiKey: string;
+  environment: string;
+  index: string;
+  namespace?: string;
+  dimension?: number;
+  metric?: 'cosine' | 'euclidean' | 'dotproduct';
+}
+```
+
+## 🔄 Memory Lifecycle
+
+1. **Creation**
+   - Memory object created
+   - Metadata attached
+   - Embeddings generated (if needed)
+
+2. **Storage**
+   - Data serialized
+   - Provider-specific storage
+   - Indexes updated
+
+3. **Retrieval**
+   - Query processed
+   - Data fetched
+   - Results deserialized
+
+4. **Archival**
+   - Age/size checks
+   - Importance evaluation
+   - Storage transition
+
+5. **Cleanup**
+   - TTL expiration
+   - Manual deletion
+   - Automatic pruning
+
+## 📊 Monitoring
+
+Each provider implements monitoring:
 
 ```typescript
-const health = await manager.healthCheck();
-console.log('System health:', health);
+// Get provider stats
+const stats = await memory.getStats();
 // {
-//   healthy: true,
-//   stores: {
-//     primary: { healthy: true },
-//     distributed_0: { healthy: true },
-//     distributed_1: { healthy: true }
-//   }
+//   totalEntries: 1000,
+//   totalSize: '500MB',
+//   oldestEntry: '2024-01-01',
+//   newestEntry: '2024-01-10'
+// }
+
+// Get provider health
+const health = await memory.healthCheck();
+// {
+//   status: 'healthy',
+//   latency: 5,
+//   errors: []
 // }
 ```
 
-## Environment Variables
+## 🔒 Security
 
-```bash
-# PostgreSQL
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=cove_memory
-POSTGRES_USER=cove
-POSTGRES_PASSWORD=cove_secret
+- Encryption at rest (provider-dependent)
+- Access control integration
+- Sanitized inputs
+- Secure connections
 
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
+## 🚀 Performance Tips
 
-# ChromaDB
-CHROMA_HOST=localhost
-CHROMA_PORT=8000
+1. Choose the right provider for your use case
+2. Use appropriate TTL values
+3. Implement regular cleanup
+4. Monitor memory usage
+5. Use batch operations when possible
 
-# Pinecone
-PINECONE_API_KEY=your-api-key
-PINECONE_ENVIRONMENT=us-east-1
-```
+## 🤝 Contributing
 
-## Docker Support
-
-A `docker-compose.yml` file is provided for easy local development:
-
-```bash
-# Start all services
-docker-compose up -d
-
-# Start specific services
-docker-compose up -d postgres redis
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
-```
-
-## Best Practices
-
-1. **Storage Selection**
-   - Use PostgreSQL for structured data and long-term storage
-   - Use Redis for fast access to recent data
-   - Use ChromaDB/Pinecone for semantic search capabilities
-
-2. **Error Handling**
-   - Always initialize the manager before use
-   - Implement proper cleanup in your application lifecycle
-   - Handle potential errors during operations
-
-3. **Performance**
-   - Use batch operations for multiple entries
-   - Configure appropriate connection pools
-   - Monitor memory usage and clean up when needed
-
-4. **Security**
-   - Never commit credentials to version control
-   - Use environment variables for sensitive data
-   - Implement proper access controls
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a new Pull Request
-
-## License
-
-MIT License - see LICENSE file for details
+1. Review the provider interface
+2. Implement required methods
+3. Add tests
+4. Submit PR with documentation

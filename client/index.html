@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent & Swarm Management Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between items-center py-4">
+                <div class="flex items-center">
+                    <i class="fas fa-robot text-blue-600 text-2xl mr-2"></i>
+                    <span class="text-xl font-semibold">Agent & Swarm Platform</span>
+                </div>
+                <div class="flex space-x-4">
+                    <button id="createAgentBtn" class="btn-primary">
+                        <i class="fas fa-plus mr-2"></i>New Agent
+                    </button>
+                    <button id="createSwarmBtn" class="btn-secondary">
+                        <i class="fas fa-network-wired mr-2"></i>New Swarm
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        <!-- Dashboard Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="stat-card">
+                <div class="flex items-center">
+                    <i class="fas fa-robot text-blue-500 text-3xl mr-4"></i>
+                    <div>
+                        <h3 class="text-lg font-semibold">Active Agents</h3>
+                        <p id="activeAgentsCount" class="text-2xl font-bold">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="flex items-center">
+                    <i class="fas fa-network-wired text-green-500 text-3xl mr-4"></i>
+                    <div>
+                        <h3 class="text-lg font-semibold">Active Swarms</h3>
+                        <p id="activeSwarmsCount" class="text-2xl font-bold">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="flex items-center">
+                    <i class="fas fa-tasks text-purple-500 text-3xl mr-4"></i>
+                    <div>
+                        <h3 class="text-lg font-semibold">Tasks Completed</h3>
+                        <p id="tasksCompletedCount" class="text-2xl font-bold">0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Interface -->
+        <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+            <!-- Chat Header -->
+            <div class="bg-gray-50 border-b border-gray-200 p-4">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center space-x-4">
+                        <select id="executorType" class="form-select">
+                            <option value="agent">Agent</option>
+                            <option value="swarm">Swarm</option>
+                        </select>
+                        <select id="executorId" class="form-select">
+                            <option value="">Select an executor</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <button id="taskBuilderBtn" class="btn-secondary">
+                            <i class="fas fa-tools mr-2"></i>Task Builder
+                        </button>
+                        <button id="sequencerBtn" class="btn-secondary">
+                            <i class="fas fa-project-diagram mr-2"></i>Sequencer
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Messages -->
+            <div id="chatMessages" class="h-96 overflow-y-auto p-4 space-y-4">
+                <!-- Messages will be dynamically added here -->
+            </div>
+
+            <!-- Chat Input -->
+            <div class="border-t border-gray-200 p-4">
+                <form id="chatForm" class="space-y-4">
+                    <div class="flex items-start space-x-4">
+                        <div class="flex-grow">
+                            <textarea id="messageInput" rows="3" class="form-textarea w-full" 
+                                    placeholder="Type your message here..."></textarea>
+                        </div>
+                        <div class="flex flex-col space-y-2">
+                            <button type="button" id="attachmentBtn" class="btn-secondary">
+                                <i class="fas fa-paperclip"></i>
+                            </button>
+                            <input type="file" id="fileInput" class="hidden" multiple>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center space-x-2" id="attachmentList">
+                            <!-- Attached files will be shown here -->
+                        </div>
+                        <button type="submit" class="btn-primary">
+                            <i class="fas fa-paper-plane mr-2"></i>Send
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </main>
+
+    <!-- Task Builder Modal -->
+    <div id="taskBuilderModal" class="modal hidden">
+        <div class="modal-content max-w-4xl">
+            <div class="modal-header">
+                <h2 class="text-xl font-semibold">Task Builder</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="p-4 space-y-4">
+                <!-- Task Components -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-medium">Task Components</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="task-component" draggable="true" data-type="input">
+                            <i class="fas fa-keyboard mr-2"></i>Input
+                        </div>
+                        <div class="task-component" draggable="true" data-type="process">
+                            <i class="fas fa-cogs mr-2"></i>Process
+                        </div>
+                        <div class="task-component" draggable="true" data-type="condition">
+                            <i class="fas fa-code-branch mr-2"></i>Condition
+                        </div>
+                        <div class="task-component" draggable="true" data-type="loop">
+                            <i class="fas fa-redo mr-2"></i>Loop
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Task Flow -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-medium">Task Flow</h3>
+                    <div id="taskFlow" class="min-h-48 border-2 border-dashed border-gray-300 rounded-lg p-4">
+                        <!-- Task components will be dropped here -->
+                    </div>
+                </div>
+
+                <!-- Task Configuration -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-medium">Configuration</h3>
+                    <div id="taskConfig" class="space-y-2">
+                        <!-- Component configuration will be shown here -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary modal-close">Cancel</button>
+                <button id="applyTaskBtn" class="btn-primary">Apply Task</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sequencer Modal -->
+    <div id="sequencerModal" class="modal hidden">
+        <div class="modal-content max-w-4xl">
+            <div class="modal-header">
+                <h2 class="text-xl font-semibold">Task Sequencer</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="p-4 space-y-4">
+                <!-- Sequence Steps -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-medium">Sequence Steps</h3>
+                    <div id="sequenceSteps" class="space-y-2">
+                        <!-- Steps will be added here -->
+                        <div class="sequence-step">
+                            <div class="flex items-center space-x-2">
+                                <span class="step-number">1</span>
+                                <select class="form-select flex-grow">
+                                    <option value="agent">Agent Task</option>
+                                    <option value="swarm">Swarm Task</option>
+                                    <option value="condition">Condition</option>
+                                    <option value="parallel">Parallel Tasks</option>
+                                </select>
+                                <button class="btn-danger">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <button id="addStepBtn" class="btn-secondary">
+                        <i class="fas fa-plus mr-2"></i>Add Step
+                    </button>
+                </div>
+
+                <!-- Sequence Flow -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-medium">Sequence Flow</h3>
+                    <div id="sequenceFlow" class="min-h-48 bg-gray-50 rounded-lg p-4">
+                        <!-- Sequence visualization will be shown here -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary modal-close">Cancel</button>
+                <button id="applySequenceBtn" class="btn-primary">Apply Sequence</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

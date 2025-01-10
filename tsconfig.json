@@ -21,6 +21,6 @@
     },
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "examples/**/*.ts", "api/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

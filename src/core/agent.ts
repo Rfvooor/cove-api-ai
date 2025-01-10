@@ -1,9 +1,16 @@
 import { EventEmitter } from 'events';
-import { BaseLanguageModel } from './base-language-model.js';
-import { Conversation } from './conversation.js';
+import { promises as fs } from 'fs';
+import { BaseLanguageModel, PromptInput } from './base-language-model.js';
 import { Tool } from './tool.js';
 import { Memory, MemoryConfig, MemoryEntry } from './memory.js';
 import { Task, TaskStatus } from './task.js';
+import { ImageHandler } from '../utils/image-handler.js';
+
+export interface TaskInput {
+  prompt: string;
+  images?: string[];
+  metadata?: Record<string, any>;
+}
 
 export interface TaskExecutionResult {
   success: boolean;
@@ -18,6 +25,14 @@ export interface TaskExecutionResult {
   stoppedEarly?: boolean;
 }
 
+export interface ConversationResult {
+  response: string;
+  memoryId: string;
+  completionTokens: number;
+  promptTokens: number;
+  lastExecutionTime: number;
+}
+
 export interface AgentInterface {
   id: string;
   name: string;
@@ -27,7 +42,6 @@ export interface AgentInterface {
   getTools(): Tool[];
   findToolForTask(task: string): Promise<Tool | undefined>;
   getLanguageModel(): BaseLanguageModel;
-  conversation: Conversation;
   memory: Memory;
   getConfiguration(): Promise<AgentConfig>;
   initialize(config?: AgentConfig): Promise<void>;
@@ -80,7 +94,6 @@ export class Agent extends EventEmitter implements AgentInterface {
   private _languageModel!: BaseLanguageModel;
   private _maxLoops: number = 5;
   private _tools: Map<string, Tool>;
-  private _conversation!: Conversation;
   private _memory!: Memory;
   private _description: string = 'A general-purpose AI agent';
   private _currentTask?: Task;
@@ -95,12 +108,12 @@ export class Agent extends EventEmitter implements AgentInterface {
   private _autoSave: boolean = false;
   private _contextLength: number = 4096;
   private _metrics: AgentMetrics;
+  private _imageHandler: ImageHandler;
 
   // Implement AgentInterface getters
   get id(): string { return this._id; }
   get name(): string { return this._name; }
   get description(): string { return this._description; }
-  get conversation(): Conversation { return this._conversation; }
   get memory(): Memory { return this._memory; }
   get lastExecutionTime(): number | undefined { return this._lastExecutionTime; }
   get metrics(): AgentMetrics { return this._metrics; }
@@ -122,6 +135,7 @@ export class Agent extends EventEmitter implements AgentInterface {
       averageExecutionTime: 0,
       capabilities: []
     };
+    this._imageHandler = new ImageHandler();
   }
 
   async initialize(config?: AgentConfig): Promise<void> {
@@ -138,9 +152,6 @@ export class Agent extends EventEmitter implements AgentInterface {
     this._retryDelay = config.retryDelay || 1000;
     this._autoSave = config.autoSave || false;
     this._contextLength = config.contextLength || 4096;
-
-    // Initialize conversation
-    this._conversation = new Conversation(this._systemPrompt);
 
     // Initialize memory system
     this._memory = await Memory.create({
@@ -171,6 +182,87 @@ export class Agent extends EventEmitter implements AgentInterface {
 
     // Initialize capabilities
     this._metrics.capabilities = this.inferCapabilities();
+  }
+
+  async converse(input: TaskInput): Promise<ConversationResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Process input with images if present
+      const processedInput = await this.processPromptWithImages(input);
+      
+      // Generate response
+      const response = await this._languageModel.generateText(processedInput);
+      
+      // Store conversation in memory
+      const memoryId = await this.remember(
+        `User: ${input.prompt}\nAssistant: ${response}`,
+        'conversation',
+        {
+          type: 'conversation',
+          userInput: input.prompt,
+          hasImages: !!input.images?.length,
+          metadata: input.metadata
+        }
+      );
+
+      this._lastExecutionTime = Date.now() - startTime;
+
+      return {
+        response,
+        memoryId,
+        completionTokens: 0, // Would need LLM to provide these
+        promptTokens: 0, // Would need LLM to provide these
+        lastExecutionTime: this._lastExecutionTime
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await this.remember(
+        `Conversation error: ${errorMessage}`,
+        'error',
+        {
+          type: 'conversation_error',
+          error: errorMessage
+        }
+      );
+      throw error;
+    }
+  }
+
+  private async processPromptWithImages(input: TaskInput): Promise<PromptInput> {
+    if (!input.images || input.images.length === 0) {
+      return { text: input.prompt };
+    }
+
+    const processedImages = await Promise.all(
+      input.images.map(async (image) => {
+        if (image.startsWith('http')) {
+          // Download and process remote image
+          const imagePath = await this._imageHandler.downloadImage(image);
+          const processedPath = await this._imageHandler.processImage(imagePath);
+          const base64 = await fs.readFile(processedPath, 'base64');
+          return {
+            url: image,
+            base64,
+            mimeType: image.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+          };
+        } else {
+          // Local file path
+          const processedPath = await this._imageHandler.processImage(image);
+          const base64 = await fs.readFile(processedPath, 'base64');
+          return {
+            base64,
+            mimeType: image.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+          };
+        }
+      })
+    );
+
+    return {
+      text: input.prompt,
+      images: processedImages,
+      metadata: input.metadata
+    };
   }
 
   private inferCapabilities(): AgentCapability[] {
@@ -230,7 +322,6 @@ export class Agent extends EventEmitter implements AgentInterface {
   getTools(): Tool[] {
     return Array.from(this._tools.values());
   }
-  
 
   addTool(tool: Tool): void {
     this._tools.set(tool.name, tool);
@@ -256,7 +347,7 @@ export class Agent extends EventEmitter implements AgentInterface {
     });
   }
 
-  async execute(task: Task): Promise<TaskExecutionResult> {
+  async execute(task: Task & { input?: TaskInput }): Promise<TaskExecutionResult> {
     const startTime = Date.now();
     this._isExecuting = true;
     this._currentTask = task;
@@ -378,7 +469,9 @@ export class Agent extends EventEmitter implements AgentInterface {
   }
 
   async plan(task: Task): Promise<string[]> {
-    const prompt = `
+    try {
+      let promptInput: PromptInput = {
+        text: `
 Task: ${task.name}
 Description: ${task.description || 'No description provided'}
 Available Tools: ${Array.from(this._tools.keys()).join(', ')}
@@ -386,20 +479,52 @@ Available Tools: ${Array.from(this._tools.keys()).join(', ')}
 Create a step-by-step plan to accomplish this task.
 Each step should be clear and actionable.
 Consider the available tools and their capabilities.
-`;
+`
+      };
+      
+      // Handle image processing if task has input with images
+      if (task.input?.images?.length) {
+        const processedInput = await this.processPromptWithImages({
+          prompt: promptInput.text,
+          images: task.input.images,
+          metadata: task.input.metadata
+        });
+        
+        // If model doesn't support images, extract text
+        if (!this._languageModel.supportsImages?.()) {
+          const extractedText = await Promise.all(
+            task.input.images.map(async (image: string) => {
+              if (image.startsWith('http')) {
+                const imagePath = await this._imageHandler.downloadImage(image);
+                return await this._imageHandler.extractText(imagePath);
+              }
+              return await this._imageHandler.extractText(image);
+            })
+          );
+          
+          promptInput.text += `\n\nImage Content:\n${extractedText.join('\n\n')}`;
+        } else {
+          promptInput = processedInput;
+        }
+      }
 
-    try {
-      const response = await this._languageModel.generateText(prompt);
-      const steps = response
+      const response = await this._languageModel.generateText(promptInput);
+      return response
         .split('\n')
         .map(step => step.trim())
-        .filter(step => step.length > 0);
-      
-      return steps;
+        .filter(step => step.length > 0 && !step.startsWith('#') && !step.startsWith('Step'));
     } catch (error) {
       console.error('Error generating task plan:', error);
       return [`Execute task: ${task.name}`];
     }
+  }
+
+  private async processTaskInput(task: Task): Promise<PromptInput> {
+    if (!task.input) {
+      return { text: task.name };
+    }
+
+    return this.processPromptWithImages(task.input);
   }
 
   async findToolForTask(step: string): Promise<Tool | undefined> {
@@ -456,6 +581,5 @@ Which tool would be most appropriate for this step? Respond with just the tool n
     await this._memory.clear();
     this._tools.clear();
     this._taskMemories.clear();
-    this._conversation.clear();
   }
 }

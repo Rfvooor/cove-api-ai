@@ -1,115 +1,225 @@
-# Cove AI Framework
+# Agent & Swarm Management Platform
 
-## Overview
+A comprehensive platform for building, managing, and orchestrating AI agents and swarms with real-time communication, persistent storage, and an interactive web interface.
 
-Cove AI is a sophisticated, flexible multi-agent AI framework designed to enable complex task decomposition and collaborative problem-solving across various domains.
+## 🌟 Key Features
 
-## Key Features
+- 🤖 **Advanced Agent Management**
+  - Multiple language model support (OpenAI, Claude, Cohere, HuggingFace)
+  - Real-time status monitoring and metrics
+  - Configurable tools and capabilities
+  - Persistent memory and state management
 
-- **Multi-Agent Architecture**: Dynamically route tasks across specialized AI agents
-- **Flexible Tool Integration**: Easily extend agent capabilities with custom tools
-- **Language Model Agnostic**: Support for multiple LLM providers (OpenAI, Anthropic, Langchain)
-- **Robust Conversation Management**: Advanced memory and context tracking
-- **Scalable Swarm Routing**: Intelligent task distribution and execution
-- **Various Memory Implementations**: Support for different memory implementations (Redis, Postgres, Chroma and more).
-## Installation
+- 🌐 **Intelligent Swarm Orchestration**
+  - Multiple topology options (Sequential, Parallel, Hierarchical, Mesh)
+  - Dynamic task routing and load balancing
+  - Inter-agent communication
+  - Collaborative problem-solving
+
+- 💾 **Multi-Provider Memory Systems**
+  - Redis for fast, volatile memory
+  - PostgreSQL for persistent, queryable storage
+  - ChromaDB for vector-based semantic search
+  - Pinecone for scalable vector operations
+
+- 🔄 **Real-Time Communication**
+  - WebSocket-based live updates
+  - Task progress monitoring
+  - System metrics streaming
+  - Agent status notifications
+
+- 📊 **Comprehensive Monitoring**
+  - Prometheus metrics integration
+  - Performance dashboards
+  - Task execution tracking
+  - Resource utilization monitoring
+
+- 🛡️ **Enterprise-Grade Security**
+  - JWT-based authentication
+  - Role-based access control
+  - Rate limiting protection
+  - Input validation and sanitization
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js >= 18
+- PostgreSQL >= 14
+- Redis (optional)
+- Language Model API keys (OpenAI, Claude, etc.)
+
+### Quick Installation
 
 ```bash
-npm install cove-ai
+# Clone repository
+git clone https://github.com/yourusername/agent-swarm-platform.git
+cd agent-swarm-platform
+
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your configuration
+
+# Initialize database
+npm run db:migrate
+
+# Start development server
+npm run dev
 ```
 
-## Quick Start
+See [QUICK-START.md](QUICK-START.md) for detailed setup instructions.
 
-### Basic Usage
+## 🏗️ Architecture
 
-```typescript
-import { Agent } from 'cove-ai/core/agent';
-import { OpenAIIntegration } from 'cove-ai/integrations/openai';
-import { SwarmRouter } from 'cove-ai/core/swarm-router';
+### API Layer (`/api`)
+- RESTful endpoints for resource management
+- WebSocket server for real-time updates
+- Request validation and rate limiting
+- Error handling and logging
 
-// Create Language Model Integrations
-const openaiModel = new OpenAIIntegration({
-  apiKey: process.env.OPENAI_API_KEY,
-  model: 'gpt-3.5-turbo'
-});
+### Core Layer (`/src`)
+- Agent and swarm implementations
+- Language model integrations
+- Memory system management
+- Tool system framework
 
-// Create Agents
-const researchAgent = new Agent({
-  name: 'Research Assistant',
-  languageModel: openaiModel,
-  systemPrompt: 'You are a detailed research assistant.'
-});
+### Client Layer (`/client`)
+- Real-time dashboard
+- Agent/swarm management interface
+- Task monitoring and control
+- System metrics visualization
 
-const writingAgent = new Agent({
-  name: 'Writing Assistant', 
-  languageModel: openaiModel,
-  systemPrompt: 'You are a professional content writer.'
-});
+## 🔧 Core Components
 
-// Create Swarm Router
-const swarmRouter = new SwarmRouter({
-  name: 'Research Writing Swarm',
-  agents: [researchAgent, writingAgent],
-  max_loops: 3
-});
+### Language Models
+- OpenAI: GPT-4, GPT-3.5-turbo
+- Anthropic: Claude-2, Claude-instant
+- Cohere: Command models
+- HuggingFace: Custom deployments
 
-// Run a Complex Task
-async function generateResearchReport(topic: string) {
-  const result = await swarmRouter.run(`Generate a comprehensive research report on ${topic}`);
-  console.log(result);
-}
+### Memory Providers
+- Redis: Short-term, volatile storage
+- PostgreSQL: Long-term, queryable storage
+- ChromaDB: Vector-based semantic search
+- Pinecone: Scalable vector operations
 
-generateResearchReport('Artificial Intelligence Trends');
+### Tool System
+- Web search capabilities
+- File processing and analysis
+- Code execution and evaluation
+- Mathematical computations
+- Blockchain data integration
+- Custom tool support
+
+### Swarm Topologies
+- Sequential: Pipeline processing
+- Parallel: Concurrent execution
+- Hierarchical: Manager-worker structure
+- Mesh: Peer-to-peer collaboration
+
+## 📈 Monitoring & Analytics
+
+### Metrics
+- Agent performance metrics
+- Swarm efficiency tracking
+- Memory usage statistics
+- Task completion rates
+
+### Dashboards
+- Real-time system overview
+- Resource utilization graphs
+- Task execution timelines
+- Error rate monitoring
+
+### Alerting
+- System health checks
+- Performance degradation alerts
+- Error rate thresholds
+- Resource utilization warnings
+
+## 🔒 Security Features
+
+### Authentication
+- JWT token-based auth
+- API key support
+- Role-based access control
+- Session management
+
+### Protection
+- Rate limiting
+- Input validation
+- SQL injection prevention
+- XSS protection
+
+## 🛠️ Development
+
+### Running Tests
+```bash
+# Run all tests
+npm test
+
+# Run specific test suite
+npm test -- --grep "Agent Tests"
+
+# Run with coverage
+npm run test:coverage
 ```
 
-## Core Concepts
+### Building
+```bash
+# Build for production
+npm run build
 
-### Agents
-Agents are the fundamental building blocks of the Cove AI Framework. Each agent:
-- Has a specific system prompt defining its role
-- Can use multiple language models
-- Supports tool integration
-- Manages its own conversation context
+# Build with type checking
+npm run build:ts
 
-### Swarm Router
-The SwarmRouter manages task distribution across multiple agents:
-- Dynamically selects the most appropriate agent
-- Supports configurable workflow types
-- Provides logging and execution tracking
-
-### Tools
-Tools extend agent capabilities to perform external tasks:
-- Support schema-based validation
-- Easily composable and extensible
-
-## Advanced Configuration
-
-### Custom Tools
-```typescript
-import { Tool } from 'cove-ai/core/tool';
-import * as z from 'zod';
-
-const weatherTool = new Tool({
-  name: 'Weather Lookup',
-  description: 'Retrieve current weather information',
-  inputSchema: z.object({
-    city: z.string(),
-    country: z.string()
-  }),
-  execute: async (input) => {
-    // Implement weather API call
-  }
-});
+# Build documentation
+npm run build:docs
 ```
 
-## Supported Integrations
-- OpenAI
-- Anthropic
-- Langchain
-- OpenRouter
+### Code Quality
+```bash
+# Run linter
+npm run lint
 
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+# Run type checker
+npm run type-check
 
-## Acknowledgments
-- Partly inspired by existing multi agentic frameworks such as [ElizaOS](https://github.com/elizaOS/eliza/tree/main) and [Swarms](https://github.com/kyegomez/swarms/tree/master/swarms) as well as other on-chain solana frameworks such as [SolanaAgentKit](https://github.com/sendaifun/solana-agent-kit) and [GOAT](https://github.com/goat-sdk/goat/tree/main). 
+# Format code
+npm run format
+```
+
+## 📚 Documentation
+
+- [Quick Start Guide](QUICK-START.md)
+- [API Documentation](docs/api.md)
+- [Architecture Guide](docs/architecture.md)
+- [Development Guide](docs/development.md)
+- [Deployment Guide](docs/deployment.md)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests (`npm test`)
+5. Run linting (`npm run lint`)
+6. Commit changes (`git commit -m 'Add amazing feature'`)
+7. Push to branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+## 📄 License
+
+This project is licensed under the ISC License - see [LICENSE](LICENSE) for details.
+
+## 🌐 Community & Support
+
+- [Discord Community](https://discord.gg/example)
+- [Documentation](https://docs.example.com)
+- [Issue Tracker](https://github.com/yourusername/agent-swarm-platform/issues)
+- Email: support@example.com

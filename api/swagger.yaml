@@ -1,0 +1,463 @@
+openapi: 3.0.0
+info:
+  title: Agent and Swarm Management API
+  version: 1.0.0
+  description: API for creating and managing AI agents and swarms
+
+servers:
+  - url: /api/v1
+    description: API version 1
+
+components:
+  schemas:
+    AgentConfig:
+      type: object
+      required:
+        - name
+        - model
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        model:
+          type: string
+        apiKey:
+          type: string
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.7
+        maxTokens:
+          type: integer
+          minimum: 1
+          default: 2048
+        tools:
+          type: array
+          items:
+            type: string
+          default: []
+        memory:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [none, buffer, summary, vector]
+            config:
+              type: object
+          default:
+            type: none
+
+    SwarmConfig:
+      type: object
+      required:
+        - name
+        - agents
+        - topology
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        agents:
+          type: array
+          items:
+            type: string
+        topology:
+          type: string
+          enum: [sequential, parallel, hierarchical, mesh]
+        routingStrategy:
+          type: string
+          enum: [roundRobin, leastBusy, weighted, custom]
+          default: roundRobin
+        maxConcurrency:
+          type: integer
+          minimum: 1
+          default: 5
+        timeout:
+          type: integer
+          minimum: 1000
+          default: 30000
+
+    TaskExecution:
+      type: object
+      required:
+        - type
+        - executorId
+        - input
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [agent, swarm]
+        executorId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+          default: pending
+        input:
+          type: object
+        output:
+          type: object
+        error:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        duration:
+          type: integer
+          description: Duration in milliseconds
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ApiResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+
+paths:
+  /agents:
+    post:
+      summary: Create a new agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentConfig'
+      responses:
+        '201':
+          description: Agent created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /agents/{agentId}:
+    get:
+      summary: Get agent status
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+    patch:
+      summary: Update agent configuration
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentConfig'
+      responses:
+        '200':
+          description: Agent updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+    delete:
+      summary: Delete agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /agents/{agentId}/execute:
+    post:
+      summary: Execute a task on an agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - input
+              properties:
+                input:
+                  type: string
+                context:
+                  type: object
+      responses:
+        '200':
+          description: Task executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /swarms:
+    post:
+      summary: Create a new swarm
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwarmConfig'
+      responses:
+        '201':
+          description: Swarm created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /swarms/{swarmId}:
+    get:
+      summary: Get swarm status
+      parameters:
+        - name: swarmId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Swarm status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Swarm not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+    patch:
+      summary: Update swarm configuration
+      parameters:
+        - name: swarmId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwarmConfig'
+      responses:
+        '200':
+          description: Swarm updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Swarm not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+    delete:
+      summary: Delete swarm
+      parameters:
+        - name: swarmId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Swarm deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Swarm not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /tasks:
+    get:
+      summary: List tasks
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Tasks retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /tasks/{taskId}:
+    get:
+      summary: Get task details
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+    delete:
+      summary: Delete task
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /tasks/{taskId}/cancel:
+    post:
+      summary: Cancel a running task
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: Task cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'

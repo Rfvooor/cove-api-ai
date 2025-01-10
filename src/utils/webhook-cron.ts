@@ -1,9 +1,8 @@
 import { Request, Response } from 'express';
 import { Agent } from '../core/agent.js';
 import { Task } from '../core/task.js';
+import express from 'express';
 
-// Use require for express since it has better CJS/ESM compatibility
-const express = require('express');
 type Application = ReturnType<typeof express>;
 
 // Simple cron-like interface for scheduled tasks
