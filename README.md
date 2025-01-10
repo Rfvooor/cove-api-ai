@@ -68,6 +68,7 @@ npm run db:migrate
 
 # Start development server
 npm run dev
+```
 
 ## 🏗️ Architecture
 
