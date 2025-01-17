@@ -1,26 +1,18 @@
-import { Tool, type ToolConfig } from '../tool.js';
-import zod from 'zod';
+import { Tool, type ToolConfig, type SchemaType } from '../tool.js';
 
-const supportedChains = [
-  'solana',
-  'ethereum',
-  'arbitrum',
-  'avalanche',
-  'bsc',
-  'optimism',
-  'polygon',
-  'base',
-  'zksync',
-  'sui',
-] as const;
+const addressTypes = ['token', 'pair'] as const;
+const sortTypes = ['asc', 'desc'] as const;
+const sortByTypes = ['rank', 'volume24hUSD', 'liquidity'] as const;
+const timeIntervals = ['1m', '3m', '15m', '30m', '1H', '2H', '4H', '6H', '8H', '12H', '1D', '3D', '1W', '1M'] as const;
+const supportedChains = ['solana', 'ethereum', 'arbitrum', 'avalanche', 'bsc', 'optimism', 'polygon', 'base', 'zksync', 'sui'] as const;
+const markets = ['Raydium', 'Raydium CP', 'Raydium Clamm', 'Meteora', 'Meteora DLMM', 'Fluxbeam', 'Pump.fun', 'OpenBook', 'OpenBook V2', 'Orca'] as const;
 
+type AddressType = typeof addressTypes[number];
+type SortType = typeof sortTypes[number];
+type SortByType = typeof sortByTypes[number];
+type TimeInterval = typeof timeIntervals[number];
 type Chain = typeof supportedChains[number];
-
-interface BirdeyeConfig {
-  name?: string;
-  description?: string;
-  apiKey: string;
-}
+type Market = typeof markets[number];
 
 interface TokenPrice {
   value: number;
@@ -78,24 +70,24 @@ type BirdeyeInput = {
   chain: Chain;
   includeLiquidity?: boolean;
 } | {
-  operation: 'getTokenHistory';
+  operation: 'getTokenHistoryPrice';
   address: string;
-  addressType: 'token' | 'pair';
-  type: '1m' | '3m' | '15m' | '30m' | '1H' | '2H' | '4H' | '6H' | '8H' | '12H' | '1D' | '3D' | '1W' | '1M';
+  addressType: AddressType;
+  type: TimeInterval;
   timeFrom?: number;
   timeTo?: number;
   chain: Chain;
 } | {
   operation: 'getOhlcv';
   address: string;
-  type: '1H' | '4H' | '12H' | '1D' | '1W' | '1M';
+  type: TimeInterval;
   timeFrom?: number;
   timeTo?: number;
   chain: Chain;
 } | {
   operation: 'getOhlcvPair';
   pairAddress: string;
-  type: '1H' | '4H' | '12H' | '1D' | '1W' | '1M';
+  type: TimeInterval;
   limit?: number;
   chain: Chain;
 } | {
@@ -105,40 +97,175 @@ type BirdeyeInput = {
 } | {
   operation: 'getTrendingTokens';
   chain: Chain;
-  sortBy: 'rank' | 'volume24hUSD' | 'liquidity';
-  sortType: 'asc' | 'desc';
+  sortBy: SortByType;
+  sortType: SortType;
   offset?: number;
   limit?: number;
 } | {
   operation: 'searchToken';
   keyword: string;
   chain: Chain;
-  sortBy: 'fdv' | 'marketcap' | 'liquidity' | 'price' | 'price_change_24h_percent' | 'trade_24h' | 
-         'trade_24h_change_percent' | 'buy_24h' | 'buy_24h_change_percent' | 'sell_24h' | 
-         'sell_24h_change_percent' | 'unique_wallet_24h' | 'unique_wallet_24h_change_percent' | 
-         'last_trade_unix_time' | 'volume_24h_usd' | 'volume_24h_change_percent';
-  sortType: 'asc' | 'desc';
+  sortBy: string;
+  sortType: SortType;
   verifyToken?: boolean;
-  markets?: Array<'Raydium' | 'Raydium CP' | 'Raydium Clamm' | 'Meteora' | 'Meteora DLMM' | 
-                  'Fluxbeam' | 'Pump.fun' | 'OpenBook' | 'OpenBook V2' | 'Orca'>;
+  markets?: Market[];
   offset?: number;
   limit?: number;
 };
 
-type BirdeyeOutput = {
+interface BirdeyeOutput {
   success: boolean;
   data: TokenPrice[] | TokenHistory[] | OHLCV[] | TokenSecurity | TrendingToken[] | SearchResult[];
   error?: string;
+}
+
+interface BirdeyeConfig {
+  name?: string;
+  description?: string;
+  apiKey: string;
+}
+
+// Input schema in JSON Schema format
+const inputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    operation: {
+      type: 'string',
+      enum: [
+        'getTokenPrice',
+        'getTokenHistoryPrice',
+        'getOhlcv',
+        'getOhlcvPair',
+        'getTokenSecurity',
+        'getTrendingTokens',
+        'searchToken'
+      ],
+      description: 'The operation to perform'
+    },
+    addresses: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Array of token addresses (for getTokenPrice)'
+    },
+    address: {
+      type: 'string',
+      description: 'Token or pair address'
+    },
+    addressType: {
+      type: 'string',
+      enum: [...addressTypes],
+      description: 'Type of address (token or pair)'
+    },
+    chain: {
+      type: 'string',
+      enum: [...supportedChains],
+      description: 'Blockchain network'
+    },
+    type: {
+      type: 'string',
+      enum: [...timeIntervals],
+      description: 'Time interval for historical data'
+    },
+    timeFrom: {
+      type: 'number',
+      description: 'Start timestamp (Unix)'
+    },
+    timeTo: {
+      type: 'number',
+      description: 'End timestamp (Unix)'
+    },
+    includeLiquidity: {
+      type: 'boolean',
+      description: 'Include liquidity information'
+    },
+    sortBy: {
+      type: 'string',
+      enum: [...sortByTypes],
+      description: 'Field to sort by'
+    },
+    sortType: {
+      type: 'string',
+      enum: [...sortTypes],
+      description: 'Sort direction'
+    },
+    keyword: {
+      type: 'string',
+      description: 'Search keyword'
+    },
+    verifyToken: {
+      type: 'boolean',
+      description: 'Only return verified tokens'
+    },
+    markets: {
+      type: 'array',
+      items: {
+        type: 'string',
+        enum: [...markets]
+      },
+      description: 'List of markets to include'
+    },
+    offset: {
+      type: 'number',
+      description: 'Pagination offset'
+    },
+    limit: {
+      type: 'number',
+      description: 'Maximum number of results'
+    }
+  },
+  required: ['operation', 'chain']
+};
+
+// Output schema in JSON Schema format
+const outputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    success: {
+      type: 'boolean',
+      description: 'Whether the operation was successful'
+    },
+    data: {
+      type: 'array',
+      description: 'Response data array',
+      items: {
+        type: 'object',
+        properties: {
+          address: { type: 'string' },
+          symbol: { type: 'string' },
+          name: { type: 'string' },
+          price: { type: 'number' },
+          marketCap: { type: 'number' },
+          volume24h: { type: 'number' }
+        }
+      }
+    },
+    error: {
+      type: 'string',
+      description: 'Error message if operation failed'
+    }
+  },
+  required: ['success', 'data']
 };
 
 export class BirdeyeTool extends Tool<BirdeyeInput, BirdeyeOutput> {
-  private readonly baseUrl = 'https://public-api.birdeye.so';
+  private readonly baseUrl: string = 'https://public-api.birdeye.so';
   private readonly apiKey: string;
 
   constructor(config: BirdeyeConfig) {
     const toolConfig: ToolConfig<BirdeyeInput, BirdeyeOutput> = {
-      name: config.name || 'birdeye',
-      description: config.description || 'Interact with Birdeye API for token data and analytics',
+      name: config.name || 'Birdeye-Tool',
+      description: config.description || `Birdeye API tool for token data and analytics. Available operations:
+      - getTokenPrice: Get current price for multiple tokens
+      - getTokenHistoryPrice: Get historical price data for a token
+      - getOhlcv: Get OHLCV data for a token
+      - getOhlcvPair: Get OHLCV data for a trading pair
+      - getTokenSecurity: Get security analysis for a token
+      - getTrendingTokens: Get trending tokens list
+      - searchToken: Search for tokens by keyword
+
+      All operations require 'chain' parameter. Supported chains: ${[...supportedChains].join(', ')}`,
+      inputSchema,
+      outputSchema,
       execute: (input: BirdeyeInput) => this.execute(input)
     };
 
@@ -177,7 +304,7 @@ export class BirdeyeTool extends Tool<BirdeyeInput, BirdeyeOutput> {
           return { success: true, data };
         }
 
-        case 'getTokenHistory': {
+        case 'getTokenHistoryPrice': {
           const queryString = new URLSearchParams({
             address: input.address,
             address_type: input.addressType,

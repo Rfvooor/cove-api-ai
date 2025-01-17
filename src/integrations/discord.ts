@@ -1,8 +1,24 @@
-import { Client, GatewayIntentBits, Message, TextChannel, isTextChannel, BaseChannel } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Message,
+  TextChannel,
+  ChannelType,
+  MessageReplyOptions,
+  Collection
+} from 'discord.js';
+import type { AgentInterface } from '../core/agent.js';
+import type { TaskInput, TaskConfig, TaskResult } from '../core/task.js';
+import { randomUUID } from 'crypto';
 import { Agent } from '../core/agent.js';
 import { WebScraper } from '../utils/web-scraper.js';
 import { SentimentAnalyzer } from '../utils/sentiment-analyzer.js';
-import { Task, TaskResult } from '../core/task.js';
+import { Task, TaskResult, TaskStatus, TaskConfig, TaskWithInput } from '../core/task.js';
+
+interface DiscordTaskResult extends TaskResult {
+  output?: any;
+  error?: string;
+}
 
 export interface DiscordIntegrationConfig {
   token: string;
@@ -70,7 +86,7 @@ export class DiscordIntegration {
     });
   }
 
-  private async handleMessage(message: Message, options: MessageHandlerOptions = {}): Promise<void> {
+  private async handleMessage(message: Message<true>, options: MessageHandlerOptions = {}): Promise<void> {
     // Ignore messages from bots unless explicitly allowed
     if (message.author.bot && !options.allowBots) return;
 
@@ -122,20 +138,49 @@ export class DiscordIntegration {
       }
     };
 
-    // Create and execute task with context
+    // Handle message attachments/images
+    const images: string[] = [];
+    if (message.attachments.size > 0) {
+      images.push(...message.attachments.map(attachment => attachment.url));
+    }
+
+    // Create and execute task with enhanced context
     const task = new Task({
-      name: 'Process Discord message',
-      description: JSON.stringify(agentContext),
-      metadata: {
-        type: 'discord_message',
-        channelId: message.channelId,
-        messageId: message.id,
-        importance: agentContext.metadata.importance
+      type: 'agent',
+      executorId: this.agent.id,
+      input: {
+        name: 'Process Discord message',
+        description: JSON.stringify(agentContext),
+        prompt: content,
+        images,
+        metadata: {
+          type: 'discord_message',
+          channelId: message.channelId,
+          messageId: message.id,
+          importance: agentContext.metadata.importance,
+          hasImages: images.length > 0
+        }
+      },
+      timeout: 30000, // 30 second timeout
+      retryConfig: {
+        maxAttempts: 3,
+        backoffMultiplier: 1.5,
+        initialDelay: 1000,
+        maxDelay: 10000
       }
     });
 
-    const result = await this.agent.execute(task);
-    const agentResponse = result.success ? result.output : null;
+    // Use agent's conversation feature for better context management
+    const conversationResult = await this.agent.converse({
+      prompt: content,
+      images,
+      metadata: {
+        chatId: `discord-${message.channelId}`,
+        ...agentContext.metadata
+      }
+    });
+
+    const agentResponse = conversationResult.response;
 
     // Reply to the message
     if (typeof agentResponse === 'string') {

@@ -92,13 +92,14 @@ export class SolanaChainTool {
   private readonly tool: Tool<SolanaChainToolInput, SolanaChainToolOutput>;
   private readonly connection: Connection;
   private readonly defaultCommitment: CommitmentType;
-
+  private readonly name: string;
   constructor(config: SolanaChainToolConfig) {
     this.connection = new Connection(config.rpcEndpoint);
     this.defaultCommitment = config.commitment || 'confirmed';
+    this.name = config.name || 'solana-chain-tool';
 
     const toolConfig: ToolConfig<SolanaChainToolInput, SolanaChainToolOutput> = {
-      name: config.name || 'solana-chain-tool',
+      name: this.name,
       description: config.description || 'Fetches on-chain data from Solana using web3.js',
       requiredTools: config.requiredTools || [],
       inputSchema: inputSchema as ZodType<SolanaChainToolInput>,

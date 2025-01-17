@@ -1,9 +1,15 @@
-import zod from 'zod';
-import type { ZodType } from 'zod';
-import { Tool, type ToolConfig } from '../tool.js';
+import { Tool, type ToolConfig, type SchemaType } from '../tool.js';
 
-// Interfaces
-export interface TokenStats {
+// Constants for validation
+const SORT_BY_VALUES = ['netFlow', 'volume', 'txCount', 'uniqueMakers', 'priceChange'] as const;
+const SORT_ORDER_VALUES = ['asc', 'desc'] as const;
+const TIME_PERIODS = ['1m', '5m', '15m', '30m', '1h', '4h', '12h', '1d'] as const;
+
+type SortBy = typeof SORT_BY_VALUES[number];
+type SortOrder = typeof SORT_ORDER_VALUES[number];
+type TimePeriod = typeof TIME_PERIODS[number];
+
+interface TokenStats {
   address: string;
   symbol: string;
   marketCap?: number;
@@ -18,134 +24,16 @@ export interface TokenStats {
   };
 }
 
-export interface TokenOHLCV {
-  timestamp: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-export interface TokenResponse {
-  id: string;
-  address: string;
-  symbol: string;
-  name: string;
-  decimals: number;
-  creationTime?: Date;
-}
-
-export interface TokenStatsResponse {
+interface TokenStatsResponse {
   success: boolean;
   data: TokenStats[];
   creditCost: number;
   timestamp: string;
 }
 
-export interface TokenOHLCVResponse {
-  success: boolean;
-  data: TokenOHLCV[];
-  creditCost: number;
-  timestamp: string;
-}
-
-export interface TokenHolderData {
-  token_address: string;
-  total_holders: number;
-  new_holders: number;
-}
-
-// Constants
-export const DEFAULT_FIELDS = [
-  'swapTime',
-  'swapValueUSD',
-  'swapAmountIn',
-  'swapAmountOut',
-  'tokenInRef',
-  'tokenOutRef',
-  'addressRef',
-  'dexKey',
-  'txnHash',
-  'slot',
-] as const;
-
-export const DEX_MAPPINGS = {
-  raydium: 0,
-  pump: 1,
-  jupiter: 2,
-} as const;
-
-export const UNIT_TO_SECONDS = {
-  s: 1,
-  m: 60,
-  h: 3600,
-  d: 86400,
-  w: 604800,
-} as const;
-
-export type TokenField = (typeof DEFAULT_FIELDS)[number];
-export type DexType = keyof typeof DEX_MAPPINGS;
-export type TimeUnit = keyof typeof UNIT_TO_SECONDS;
-
-// Zod Schemas for validation
-const sortByValues = ['netFlow', 'volume', 'txCount', 'uniqueMakers', 'priceChange'] as const;
-const sortOrderValues = ['asc', 'desc'] as const;
-
-type SortBy = typeof sortByValues[number];
-type SortOrder = typeof sortOrderValues[number];
-
-const tokenStatsOptionsSchema = zod.object({
-  debug: zod.boolean().optional(),
-  period: zod.string(),
-  minMarketCap: zod.number().optional(),
-  maxMarketCap: zod.number().optional(),
-  minNetFlow: zod.number().optional(),
-  maxNetFlow: zod.number().optional(),
-  minPriceChange: zod.number().optional(),
-  maxPriceChange: zod.number().optional(),
-  minTxCount: zod.number().optional(),
-  maxTxCount: zod.number().optional(),
-  minUniqueMakers: zod.number().optional(),
-  maxUniqueMakers: zod.number().optional(),
-  startTimestamp: zod.number().optional(),
-  endTimestamp: zod.number().optional(),
-  limit: zod.number().optional(),
-  sortBy: zod.string().optional(),
-  sortOrder: zod.string().optional(),
-  dexes: zod.array(zod.string()).optional(),
-  tokenAddresses: zod.array(zod.string()).optional(),
-  tokenRefs: zod.array(zod.number()).optional(),
-  getHolderData: zod.boolean().optional(),
-  detailed: zod.boolean().optional(),
-  onlyPumpTokens: zod.boolean().optional(),
-});
-
-const tokenStatsSchema = zod.object({
-  address: zod.string(),
-  symbol: zod.string(),
-  marketCap: zod.number().optional(),
-  netFlow: zod.number().optional(),
-  priceChange: zod.number().optional(),
-  txCount: zod.number().optional(),
-  uniqueMakers: zod.number().optional(),
-  volume: zod.number().optional(),
-  holderData: zod.object({
-    totalHolders: zod.number(),
-    newHolders: zod.number(),
-  }).optional(),
-});
-
-const tokenStatsResponseSchema = zod.object({
-  success: zod.boolean(),
-  data: zod.array(tokenStatsSchema),
-  creditCost: zod.number(),
-  timestamp: zod.string(),
-});
-
-export type TokenStatsOptions = {
+type TokenStatsOptions = {
   debug?: boolean;
-  period: string;
+  period: TimePeriod;
   minMarketCap?: number;
   maxMarketCap?: number;
   minNetFlow?: number;
@@ -161,7 +49,6 @@ export type TokenStatsOptions = {
   limit?: number;
   sortBy?: SortBy;
   sortOrder?: SortOrder;
-  dexes?: string[];
   tokenAddresses?: string[];
   tokenRefs?: number[];
   getHolderData?: boolean;
@@ -169,92 +56,230 @@ export type TokenStatsOptions = {
   onlyPumpTokens?: boolean;
 };
 
-export type TokenToolInput = {
-  address?: string;
-  symbol?: string;
-  options?: TokenStatsOptions;
-};
-
 export interface SolanaTokenToolConfig {
   name?: string;
   description?: string;
-  requiredTools?: string[];
   apiEndpoint: string;
   apiKey: string;
 }
 
-export class SolanaTokenTool {
-  private readonly tool: Tool<TokenToolInput, TokenStatsResponse>;
+// Input schema in JSON Schema format
+const inputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    period: {
+      type: 'string',
+      enum: [...TIME_PERIODS],
+      description: 'Time period for data analysis'
+    },
+    minMarketCap: {
+      type: 'number',
+      description: 'Minimum market capitalization in USD'
+    },
+    maxMarketCap: {
+      type: 'number',
+      description: 'Maximum market capitalization in USD'
+    },
+    minNetFlow: {
+      type: 'number',
+      description: 'Minimum net flow in USD'
+    },
+    maxNetFlow: {
+      type: 'number',
+      description: 'Maximum net flow in USD'
+    },
+    minPriceChange: {
+      type: 'number',
+      description: 'Minimum price change percentage'
+    },
+    maxPriceChange: {
+      type: 'number',
+      description: 'Maximum price change percentage'
+    },
+    minTxCount: {
+      type: 'number',
+      description: 'Minimum transaction count'
+    },
+    maxTxCount: {
+      type: 'number',
+      description: 'Maximum transaction count'
+    },
+    minUniqueMakers: {
+      type: 'number',
+      description: 'Minimum unique makers count'
+    },
+    maxUniqueMakers: {
+      type: 'number',
+      description: 'Maximum unique makers count'
+    },
+    startTimestamp: {
+      type: 'number',
+      description: 'Start timestamp (Unix)'
+    },
+    endTimestamp: {
+      type: 'number',
+      description: 'End timestamp (Unix)'
+    },
+    limit: {
+      type: 'number',
+      description: 'Maximum number of results',
+      minimum: 1,
+      maximum: 100,
+      default: 20
+    },
+    sortBy: {
+      type: 'string',
+      enum: [...SORT_BY_VALUES],
+      description: 'Field to sort by'
+    },
+    sortOrder: {
+      type: 'string',
+      enum: [...SORT_ORDER_VALUES],
+      description: 'Sort direction'
+    },
+    tokenAddresses: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'List of token addresses to filter by'
+    },
+    tokenRefs: {
+      type: 'array',
+      items: { type: 'number' },
+      description: 'List of token reference IDs'
+    },
+    getHolderData: {
+      type: 'boolean',
+      description: 'Include holder statistics',
+      default: true
+    },
+    detailed: {
+      type: 'boolean',
+      description: 'Include detailed token information',
+      default: true
+    },
+    onlyPumpTokens: {
+      type: 'boolean',
+      description: 'Only include tokens with significant price increases',
+      default: false
+    },
+    debug: {
+      type: 'boolean',
+      description: 'Enable debug logging',
+      default: false
+    }
+  },
+  required: ['period']
+};
+
+// Output schema in JSON Schema format
+const outputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    success: {
+      type: 'boolean',
+      description: 'Whether the operation was successful'
+    },
+    data: {
+      type: 'array',
+      description: 'Array of token statistics',
+      items: {
+        type: 'object',
+        properties: {
+          address: {
+            type: 'string',
+            description: 'Token contract address'
+          },
+          symbol: {
+            type: 'string',
+            description: 'Token symbol'
+          },
+          marketCap: {
+            type: 'number',
+            description: 'Market capitalization in USD'
+          },
+          netFlow: {
+            type: 'number',
+            description: 'Net flow in USD'
+          },
+          priceChange: {
+            type: 'number',
+            description: 'Price change percentage'
+          },
+          txCount: {
+            type: 'number',
+            description: 'Transaction count'
+          },
+          uniqueMakers: {
+            type: 'number',
+            description: 'Number of unique makers'
+          },
+          volume: {
+            type: 'number',
+            description: 'Trading volume in USD'
+          },
+          holderData: {
+            type: 'object',
+            properties: {
+              totalHolders: {
+                type: 'number',
+                description: 'Total number of token holders'
+              },
+              newHolders: {
+                type: 'number',
+                description: 'Number of new holders in period'
+              }
+            }
+          }
+        },
+        required: ['address', 'symbol']
+      }
+    },
+    creditCost: {
+      type: 'number',
+      description: 'API credits used for this request'
+    },
+    timestamp: {
+      type: 'string',
+      description: 'Timestamp of the response'
+    }
+  },
+  required: ['success', 'data', 'creditCost', 'timestamp']
+};
+
+class SolanaTokenToolImpl extends Tool<TokenStatsOptions, TokenStatsResponse> {
   private readonly apiEndpoint: string;
   private readonly apiKey: string;
 
-  constructor(config: SolanaTokenToolConfig) {
-    this.apiEndpoint = config.apiEndpoint;
-    this.apiKey = config.apiKey;
-
-    const validateInput = (input: TokenToolInput): boolean => {
-      if (!input.address && !input.symbol) {
-        throw new Error("Either address or symbol must be provided");
-      }
-      if (input.options?.sortBy && !sortByValues.includes(input.options.sortBy)) {
-        throw new Error(`Invalid sortBy value. Must be one of: ${sortByValues.join(', ')}`);
-      }
-      if (input.options?.sortOrder && !sortOrderValues.includes(input.options.sortOrder)) {
-        throw new Error(`Invalid sortOrder value. Must be one of: ${sortOrderValues.join(', ')}`);
-      }
-      return true;
-    };
-
-    const toolConfig: ToolConfig<TokenToolInput, TokenStatsResponse> = {
-      name: config.name || 'solana-token-tool',
-      description: config.description || 'Fetches data for Solana memecoins by address or symbol',
-      requiredTools: config.requiredTools || [],
-      inputSchema: zod.object({
-        address: zod.string().optional(),
-        symbol: zod.string().optional(),
-        options: tokenStatsOptionsSchema.optional(),
-      }) as ZodType<TokenToolInput>,
-      outputSchema: tokenStatsResponseSchema,
-      execute: async (input: TokenToolInput) => {
-        validateInput(input);
-        return this.fetchTokenData(input);
-      },
-    };
-
-    this.tool = new Tool<TokenToolInput, TokenStatsResponse>(toolConfig);
+  constructor(config: ToolConfig<TokenStatsOptions, TokenStatsResponse>, apiEndpoint: string, apiKey: string) {
+    super(config);
+    this.apiEndpoint = apiEndpoint;
+    this.apiKey = apiKey;
   }
 
-  private async fetchTokenData(input: TokenToolInput): Promise<TokenStatsResponse> {
+  async execute(options: TokenStatsOptions): Promise<TokenStatsResponse> {
     try {
       const queryParams = new URLSearchParams();
 
-      if (input.address) {
-        queryParams.append('address', input.address);
-      } else if (input.symbol) {
-        queryParams.append('symbol', input.symbol);
-      }
-
-      if (input.options) {
-        Object.entries(input.options).forEach(([key, value]) => {
-          if (value !== undefined && value !== null) {
-            if (Array.isArray(value)) {
-              value.forEach((v) => {
-                if (v !== undefined && v !== null) {
-                  queryParams.append(`${key}[]`, String(v));
-                }
-              });
-            } else {
-              queryParams.append(key, String(value));
-            }
+      Object.entries(options).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          if (Array.isArray(value)) {
+            value.forEach((v) => {
+              if (v !== undefined && v !== null) {
+                queryParams.append(`${key}[]`, String(v));
+              }
+            });
+          } else {
+            queryParams.append(key, String(value));
           }
-        });
-      }
+        }
+      });
 
-      const response = await fetch(`${this.apiEndpoint}/tokens?${queryParams.toString()}`, {
+      const response = await fetch(`${this.apiEndpoint}/token/stats?${queryParams.toString()}`, {
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
-        },
+          'X-API-Key': this.apiKey,
+          'Origin': 'https://covequant.com'
+        }
       });
 
       if (!response.ok) {
@@ -262,19 +287,42 @@ export class SolanaTokenTool {
       }
 
       const data = await response.json();
-      return tokenStatsResponseSchema.parse(data);
+      return {
+        success: true,
+        data: data.tokens,
+        creditCost: data.creditCost,
+        timestamp: new Date().toISOString()
+      };
     } catch (error) {
-      console.error('Error fetching token data:', error);
+      console.error('Error fetching token stats:', error);
       throw error instanceof Error ? error : new Error(String(error));
     }
   }
+}
 
-  async execute(input: TokenToolInput): Promise<TokenStatsResponse> {
-    return this.tool.execute(input);
-  }
+export class SolanaTokenTool {
+  static create(config: SolanaTokenToolConfig): Tool<TokenStatsOptions, TokenStatsResponse> {
+    const toolConfig: ToolConfig<TokenStatsOptions, TokenStatsResponse> = {
+      name: config.name || 'solana-token-tool',
+      description: config.description || `Solana token analysis tool with comprehensive metrics. Features:
+      - Market capitalization tracking
+      - Price change analysis
+      - Transaction volume monitoring
+      - Holder statistics
+      - Net flow analysis
+      - Unique maker tracking
+      
+      Time periods: ${[...TIME_PERIODS].join(', ')}
+      Sort fields: ${[...SORT_BY_VALUES].join(', ')}
+      Sort orders: ${[...SORT_ORDER_VALUES].join(', ')}`,
+      inputSchema,
+      outputSchema,
+      execute: async (input: TokenStatsOptions) => {
+        const tool = new SolanaTokenToolImpl(toolConfig, config.apiEndpoint, config.apiKey);
+        return tool.execute(input);
+      }
+    };
 
-  static create(config: SolanaTokenToolConfig): Tool<TokenToolInput, TokenStatsResponse> {
-    const instance = new SolanaTokenTool(config);
-    return instance.tool;
+    return new SolanaTokenToolImpl(toolConfig, config.apiEndpoint, config.apiKey);
   }
 }

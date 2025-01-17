@@ -5,10 +5,17 @@ A comprehensive platform for building, managing, and orchestrating AI agents and
 ## 🌟 Key Features
 
 - 🤖 **Advanced Agent Management**
-  - Multiple language model support (OpenAI, Claude, Cohere, HuggingFace)
+  - Multiple language model support (OpenAI, Claude, Cohere, HuggingFace, OpenRouter)
   - Real-time status monitoring and metrics
   - Configurable tools and capabilities
   - Persistent memory and state management
+  - Sentiment analysis and natural language processing
+
+- 💬 **Social Media Integration**
+  - Twitter integration for social listening and engagement
+  - Discord bot capabilities for community interaction
+  - Telegram bot support for messaging and alerts
+  - Automated response generation and moderation
 
 - 🌐 **Intelligent Swarm Orchestration**
   - Multiple topology options (Sequential, Parallel, Hierarchical, Mesh)
@@ -47,7 +54,22 @@ A comprehensive platform for building, managing, and orchestrating AI agents and
 - Node.js >= 18
 - PostgreSQL >= 14
 - Redis (optional)
-- Language Model API keys (OpenAI, Claude, etc.)
+
+### Required API Keys
+- **Language Models**
+  - OpenAI API key
+  - Anthropic API key (Claude)
+  - Cohere API key
+  - OpenRouter API key
+  
+- **Social Media**
+  - Twitter API credentials
+  - Discord bot token
+  - Telegram bot token
+
+- **Memory & Storage**
+  - Pinecone API key (optional)
+  - ChromaDB credentials (optional)
 
 ### Quick Installation
 
@@ -93,11 +115,11 @@ npm run dev
 ## 🔧 Core Components
 
 ### Language Models
-- OpenAI
-- Anthropic
-- Cohere
-- HuggingFace
-- Openrouter
+- OpenAI: GPT-4 and GPT-3.5 models with function calling
+- Anthropic: Claude-2 and Claude-instant with long context
+- Cohere: Command models with multilingual support
+- HuggingFace: Custom model deployments
+- OpenRouter: Unified access to multiple AI providers
 
 ### Memory Providers
 - Redis: Short-term, volatile storage

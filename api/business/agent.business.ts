@@ -2,9 +2,9 @@ import { Agent as AgentModel, AgentModel as AgentInstance, AgentAttributes } fro
 import { Agent as CoreAgent } from '../../src/core/agent.js';
 import { AgentConfig, AgentMetrics } from '../models/types.js';
 import { Tool } from '../../src/core/tool.js';
-import { BaseLanguageModel } from '../../src/core/base-language-model.js';
+import { BaseLanguageModel, GenerateTextResult } from '../../src/core/base-language-model.js';
 import { Memory } from '../../src/core/memory.js';
-import { Task, TaskStatus } from '../../src/core/task.js';
+import { Task, TaskConfig, TaskStatus } from '../../src/core/task.js';
 
 export interface PaginationOptions {
   limit?: number;
@@ -19,9 +19,29 @@ export interface PaginatedResult<T> {
   offset: number;
 }
 
+export interface ExtendedAgentMetrics extends AgentMetrics {
+  tokenUsage: {
+    total: number;
+    prompt: number;
+    completion: number;
+  };
+  costs: {
+    total: number;
+    average: number;
+  };
+  modelMetrics: {
+    totalRequests: number;
+    successfulRequests: number;
+    failedRequests: number;
+    averageLatency: number;
+    errorRates: Record<string, number>;
+  };
+}
+
 export class AgentBusiness {
   private model: typeof AgentModel;
   private coreAgent?: CoreAgent;
+  private languageModel?: BaseLanguageModel;
 
   constructor() {
     this.model = AgentModel;
@@ -33,7 +53,9 @@ export class AgentBusiness {
       name: config.name,
       description: config.description,
       config: config,
-    });
+      metrics: this.initializeMetrics(),
+      status: 'idle'
+    } as AgentAttributes);
 
     // Initialize core agent
     await this.initializeCoreAgent(agent);
@@ -56,15 +78,15 @@ export class AgentBusiness {
       order = [['createdAt', 'DESC']]
     } = options;
 
-    const { rows, count } = await this.model.findAndCountAll({
+    const result = await this.model.findAndCountAll({
       limit,
       offset,
       order,
     });
 
     return {
-      items: rows,
-      total: count,
+      items: result.rows as AgentInstance[],
+      total: result.count,
       limit,
       offset,
     };
@@ -96,32 +118,66 @@ export class AgentBusiness {
       await this.initializeCoreAgent(agent);
     }
 
-    const task: Task = {
-      id: agent.id,
-      name: input,
-      status: TaskStatus.PENDING,
+    const taskConfig: TaskConfig = {
+      type: 'agent',
+      executorId: agent.id,
       input: {
+        name: `Task for ${agent.name}`,
+        description: `Execute task: ${input}`,
         prompt: input,
         metadata: context
       },
-      createdAt: new Date(),
-      updatedAt: new Date()
+      context,
+      timeout: agent.config.timeout || 30000,
+      retryConfig: {
+        maxAttempts: agent.config.retryAttempts || 3,
+        backoffMultiplier: 1.5,
+        initialDelay: 1000,
+        maxDelay: 30000
+      }
     };
+
+    const task = new Task(taskConfig);
 
     const startTime = Date.now();
     try {
-      const result = await this.coreAgent!.execute(task);
-      await this.updateMetrics(agent, true, Date.now() - startTime);
+      // Set executor
+      task.setExecutor(this.coreAgent!);
+
+      // Execute task
+      const result = await task.execute();
+      
+      // Update metrics with language model results if available
+      if (this.languageModel?.getMetrics) {
+        const modelMetrics = this.languageModel.getMetrics();
+        await this.updateMetrics(agent, {
+          success: result.status === TaskStatus.COMPLETED,
+          duration: Date.now() - startTime,
+          modelMetrics,
+          result
+        });
+      } else {
+        await this.updateMetrics(agent, {
+          success: result.status === TaskStatus.COMPLETED,
+          duration: Date.now() - startTime,
+          result
+        });
+      }
+
       return result;
     } catch (error) {
-      await this.updateMetrics(agent, false, Date.now() - startTime);
+      await this.updateMetrics(agent, {
+        success: false,
+        duration: Date.now() - startTime,
+        error: error instanceof Error ? error : new Error(String(error))
+      });
       throw error;
     }
   }
 
   private async initializeCoreAgent(agent: AgentInstance): Promise<void> {
     // Initialize language model
-    const model = await this.initializeLanguageModel(agent.config);
+    this.languageModel = await this.initializeLanguageModel(agent.config);
 
     // Initialize memory if configured
     const memory = await Memory.create({
@@ -143,7 +199,7 @@ export class AgentBusiness {
     this.coreAgent = await CoreAgent.create({
       name: agent.config.name,
       description: agent.config.description,
-      languageModel: model,
+      languageModel: this.languageModel,
       tools,
       memoryConfig: {
         maxShortTermItems: 100,
@@ -194,24 +250,93 @@ export class AgentBusiness {
     return tools;
   }
 
-  private async updateMetrics(agent: AgentInstance, success: boolean, duration: number): Promise<void> {
-    const oldMetrics = agent.metrics;
-    const totalTasks = oldMetrics.totalTasks + 1;
-    const successfulTasks = success ? oldMetrics.successfulTasks + 1 : oldMetrics.successfulTasks;
-    const failedTasks = success ? oldMetrics.failedTasks : oldMetrics.failedTasks + 1;
-    
-    // Calculate new average response time
-    const oldTotal = oldMetrics.averageResponseTime * (totalTasks - 1);
-    const averageResponseTime = (oldTotal + duration) / totalTasks;
-
-    const newMetrics: AgentMetrics = {
-      totalTasks,
-      successfulTasks,
-      failedTasks,
-      averageResponseTime,
-      lastExecutionTime: new Date().toISOString()
+  private initializeMetrics(): ExtendedAgentMetrics {
+    return {
+      totalTasks: 0,
+      successfulTasks: 0,
+      failedTasks: 0,
+      averageResponseTime: 0,
+      lastExecutionTime: new Date().toISOString(),
+      tokenUsage: {
+        total: 0,
+        prompt: 0,
+        completion: 0
+      },
+      costs: {
+        total: 0,
+        average: 0
+      },
+      modelMetrics: {
+        totalRequests: 0,
+        successfulRequests: 0,
+        failedRequests: 0,
+        averageLatency: 0,
+        errorRates: {}
+      }
     };
+  }
 
-    await agent.update({ metrics: newMetrics } as Partial<AgentAttributes>);
+  private async updateMetrics(
+    agent: AgentInstance,
+    data: {
+      success: boolean;
+      duration: number;
+      modelMetrics?: {
+        totalRequests: number;
+        successfulRequests: number;
+        failedRequests: number;
+        averageLatency: number;
+        errorRates: Record<string, number>;
+      };
+      result?: any;
+      error?: Error;
+    }
+  ): Promise<void> {
+    const metrics = agent.metrics as ExtendedAgentMetrics;
+    const weight = 0.1; // Weight for exponential moving average
+
+    // Update basic metrics
+    metrics.totalTasks++;
+    if (data.success) {
+      metrics.successfulTasks++;
+    } else {
+      metrics.failedTasks++;
+    }
+
+    // Update response time
+    metrics.averageResponseTime = 
+      (1 - weight) * metrics.averageResponseTime + weight * data.duration;
+    metrics.lastExecutionTime = new Date().toISOString();
+
+    // Update token usage and costs if result contains that information
+    if (data.result?.metrics) {
+      const { tokens, cost } = data.result.metrics;
+      if (tokens) {
+        metrics.tokenUsage.prompt += tokens.prompt || 0;
+        metrics.tokenUsage.completion += tokens.completion || 0;
+        metrics.tokenUsage.total += tokens.total || 0;
+      }
+      if (cost) {
+        metrics.costs.total += cost;
+        metrics.costs.average = metrics.costs.total / metrics.totalTasks;
+      }
+    }
+
+    // Update model metrics if available
+    if (data.modelMetrics) {
+      metrics.modelMetrics = {
+        ...metrics.modelMetrics,
+        ...data.modelMetrics
+      };
+    }
+
+    // Update error rates if there was an error
+    if (data.error) {
+      const errorType = data.error.constructor.name;
+      metrics.modelMetrics.errorRates[errorType] = 
+        (metrics.modelMetrics.errorRates[errorType] || 0) + 1;
+    }
+
+    await agent.update({ metrics } as Partial<AgentAttributes>);
   }
 }

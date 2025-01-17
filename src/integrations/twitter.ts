@@ -1,7 +1,8 @@
 import { TwitterApi, TweetV2PostParams } from 'twitter-api-v2';
+import { randomUUID } from 'crypto';
 import { Agent } from '../core/agent.js';
 import { SentimentAnalyzer } from '../utils/sentiment-analyzer.js';
-import { Task, TaskResult } from '../core/task.js';
+import { Task, TaskResult, TaskStatus } from '../core/task.js';
 
 export interface TwitterIntegrationConfig {
   appKey: string;
@@ -45,6 +46,7 @@ export class TwitterIntegration {
   }
 
   async postTweet(options: TweetOptions): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const tweetParams: TweetV2PostParams = {
         text: options.text
@@ -59,20 +61,37 @@ export class TwitterIntegration {
       }
 
       const tweet = await this.client.v2.tweet(tweetParams);
+      const endTime = new Date();
 
       return {
-        success: true,
-        data: tweet
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: tweet,
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime(),
+        metrics: {
+          tokenCount: options.text.length,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: options.text.length
+        }
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to post tweet'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to post tweet',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
 
   async listenToMentions(filter?: StreamFilter): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const stream = await this.client.v2.searchStream({
         'tweet.fields': ['author_id', 'created_at', 'text', 'lang'],
@@ -93,7 +112,7 @@ export class TwitterIntegration {
             },
             metadata: {
               type: 'twitter_mention',
-              importance: sentiment * 0.7 + 0.3, // Base importance on sentiment with minimum threshold
+              importance: sentiment * 0.7 + 0.3,
               isConsolidated: false,
               consolidationScore: 0,
               isArchived: false
@@ -101,18 +120,42 @@ export class TwitterIntegration {
           };
 
           const task = new Task({
-            name: 'Process Twitter mention',
-            description: JSON.stringify(agentContext),
-            metadata: agentContext.metadata
+            type: 'agent',
+            executorId: this.agent.id,
+            input: {
+              name: 'Process Twitter mention',
+              description: JSON.stringify(agentContext),
+              prompt: tweet.data.text,
+              metadata: agentContext.metadata
+            },
+            timeout: 30000,
+            retryConfig: {
+              maxAttempts: 3,
+              backoffMultiplier: 1.5,
+              initialDelay: 1000,
+              maxDelay: 30000
+            }
           });
 
-          const result = await this.agent.execute(task);
-          const agentResponse = result.success ? result.output : null;
+          task.setExecutor(this.agent);
+          const result = await task.execute();
+
+          // Store interaction in agent's memory
+          await this.agent.memory.add({
+            content: `Tweet: ${tweet.data.text}\nResponse: ${result.output}`,
+            type: 'conversation',
+            metadata: {
+              tweetId: tweet.data.id,
+              authorId: tweet.data.author_id,
+              sentiment,
+              taskResult: result
+            }
+          });
 
           // Optionally reply to the tweet
-          if (typeof agentResponse === 'string') {
+          if (result.status === TaskStatus.COMPLETED && typeof result.output === 'string') {
             await this.postTweet({
-              text: agentResponse,
+              text: result.output,
               replyToTweetId: tweet.data.id
             });
           }
@@ -122,14 +165,24 @@ export class TwitterIntegration {
       // Start processing stream in background
       processStream().catch(console.error);
 
+      const endTime = new Date();
       return {
-        success: true,
-        data: { message: 'Twitter stream listener started' }
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: { message: 'Twitter stream listener started' },
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to start Twitter stream'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to start Twitter stream',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
@@ -139,6 +192,7 @@ export class TwitterIntegration {
     startTime?: Date;
     endTime?: Date;
   }): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const tweets = await this.client.v2.search({
         query,
@@ -148,70 +202,129 @@ export class TwitterIntegration {
         'tweet.fields': ['author_id', 'created_at', 'text', 'lang']
       });
 
+      const endTime = new Date();
       return {
-        success: true,
-        data: tweets.data
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: tweets.data,
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to search tweets'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to search tweets',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
 
   async getUserProfile(userId: string): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const user = await this.client.v2.user(userId);
+      const endTime = new Date();
 
       return {
-        success: true,
-        data: user.data
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: user.data,
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to retrieve user profile'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to retrieve user profile',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
 
   async automate(task: Task): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       // Create enhanced task for automation
       const automationTask = new Task({
-        name: task.name,
-        description: task.description,
-        metadata: {
-          ...task.metadata,
-          type: 'twitter_automation',
-          importance: 0.8, // High importance for automated tasks
-          isConsolidated: false,
-          consolidationScore: 0,
-          isArchived: false
+        type: 'agent',
+        executorId: this.agent.id,
+        input: {
+          name: task.toJSON().name,
+          description: task.toJSON().input.description,
+          prompt: task.toJSON().input.prompt,
+          metadata: {
+            ...task.toJSON().input.metadata,
+            type: 'twitter_automation',
+            importance: 0.8
+          }
+        },
+        timeout: 30000,
+        retryConfig: {
+          maxAttempts: 3,
+          backoffMultiplier: 1.5,
+          initialDelay: 1000,
+          maxDelay: 30000
         }
       });
 
-      const result = await this.agent.execute(automationTask);
+      automationTask.setExecutor(this.agent);
+      const result = await automationTask.execute();
 
-      // Post tweet based on execution result
-      const tweetResult = await this.postTweet({
-        text: typeof result.output === 'string'
-          ? result.output
-          : JSON.stringify(result.output)
+      // Store automation result in memory
+      await this.agent.memory.add({
+        content: `Automation task: ${task.toJSON().name}\nResult: ${result.output}`,
+        type: 'task',
+        metadata: {
+          taskId: task.id,
+          automationType: 'twitter',
+          result
+        }
       });
 
+      // Post tweet based on execution result
+      const tweetText = typeof result.output === 'string'
+        ? result.output
+        : JSON.stringify(result.output);
+        
+      const tweetResult = await this.postTweet({
+        text: tweetText
+      });
+
+      const endTime = new Date();
       return {
-        success: true,
-        data: {
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: {
           taskResult: result,
-          tweetPosted: tweetResult.success
+          tweetPosted: tweetResult.status === TaskStatus.COMPLETED,
+          tweetLength: tweetText.length
+        },
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime(),
+        metrics: {
+          ...result.metrics
         }
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Twitter automation failed'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Twitter automation failed',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }

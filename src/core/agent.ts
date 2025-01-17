@@ -1,16 +1,16 @@
 import { EventEmitter } from 'events';
 import { promises as fs } from 'fs';
-import { BaseLanguageModel, PromptInput } from './base-language-model.js';
+import { BaseLanguageModel, PromptInput, GenerateTextResult } from './base-language-model.js';
 import { Tool } from './tool.js';
 import { Memory, MemoryConfig, MemoryEntry } from './memory.js';
-import { Task, TaskStatus } from './task.js';
+import { Task, TaskStatus, TaskConfig, TaskInput } from './task.js';
 import { ImageHandler } from '../utils/image-handler.js';
-
-export interface TaskInput {
-  prompt: string;
-  images?: string[];
-  metadata?: Record<string, any>;
-}
+import { Conversation } from './conversation.js';
+import { AgentPlanner } from './agent-planner.js';
+import { AgentMetricsTracker } from './agent-metrics.js';
+import { AgentMemoryManager } from './agent-memory.js';
+import { ConversationManager } from './agent-conversation.js';
+import { SchemaProperty, SchemaPropertyType, BasicSchemaType } from './types/schema.js';
 
 export interface TaskExecutionResult {
   success: boolean;
@@ -31,12 +31,22 @@ export interface ConversationResult {
   completionTokens: number;
   promptTokens: number;
   lastExecutionTime: number;
+  toolsUsed?: string[];
+  toolOutputs?: Record<string, any>;
+  type?: 'plan' | 'plan_pending' | 'execution';
+  metadata?: {
+    type?: string;
+    planSteps?: number;
+    status?: string;
+    [key: string]: any;
+  };
 }
 
 export interface AgentInterface {
   id: string;
   name: string;
   description: string;
+  converse(input: TaskInput): Promise<ConversationResult>;
   execute(task: Task): Promise<TaskExecutionResult>;
   plan(task: Task): Promise<string[]>;
   getTools(): Tool[];
@@ -54,8 +64,7 @@ export interface AgentConfig {
   systemPrompt?: string;
   languageModel?: BaseLanguageModel;
   maxLoops?: number;
-  tools?: Tool[];
-  agent_name?: string;
+  tools?: any[];
   description?: string;
   memoryConfig?: MemoryConfig;
   temperature?: number;
@@ -100,6 +109,7 @@ export class Agent extends EventEmitter implements AgentInterface {
   private _isExecuting: boolean = false;
   private _loopCount: number = 0;
   private _taskMemories: Map<string, string[]> = new Map();
+  private _conversations: Map<string, Conversation> = new Map();
   private _lastExecutionTime?: number;
   private _temperature: number = 0.7;
   private _maxTokens: number = 1000;
@@ -109,6 +119,7 @@ export class Agent extends EventEmitter implements AgentInterface {
   private _contextLength: number = 4096;
   private _metrics: AgentMetrics;
   private _imageHandler: ImageHandler;
+  private _planner!: AgentPlanner;
 
   // Implement AgentInterface getters
   get id(): string { return this._id; }
@@ -142,9 +153,13 @@ export class Agent extends EventEmitter implements AgentInterface {
     if (!config) return;
 
     // Basic configuration
-    this._name = config.name || config.agent_name || 'Unnamed Agent';
+    this._name = config.name || 'Unnamed Agent';
     this._description = config.description || 'A general-purpose AI agent';
-    this._systemPrompt = config.systemPrompt || 'You are a helpful AI assistant';
+    const newSystemPrompt = config.systemPrompt || 'You are a helpful AI assistant';
+    if (newSystemPrompt !== this._systemPrompt) {
+      this._systemPrompt = newSystemPrompt;
+      this.updateConversationSystemPrompts();
+    }
     this._maxLoops = config.maxLoops || 5;
     this._temperature = config.temperature || 0.7;
     this._maxTokens = config.maxTokens || 1000;
@@ -186,47 +201,537 @@ export class Agent extends EventEmitter implements AgentInterface {
 
   async converse(input: TaskInput): Promise<ConversationResult> {
     const startTime = Date.now();
-    
+    this._loopCount = 0;
+    let currentResponse = '';
+    let completionTokens = 0;
+    let promptTokens = 0;
+    const toolsUsed: string[] = [];
+    const toolOutputs: Record<string, any> = {};
+
+    // Get or create conversation for this chat
+    const conversation = this.getOrCreateConversation(input.metadata?.chatId);
+
     try {
       // Process input with images if present
       const processedInput = await this.processPromptWithImages(input);
-      
-      // Generate response
-      const response = await this._languageModel.generateText(processedInput);
-      
-      // Store conversation in memory
+
+      // Add user message to conversation
+      conversation.add({
+        role: 'user',
+        content: input.prompt,
+        timestamp: Date.now(),
+        metadata: {
+          tokens: input.prompt.length,
+          ...Object.entries(input.metadata || {})
+            .filter(([key]) => ['model', 'cost', 'tokens'].includes(key))
+            .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {})
+        }
+      });
+
+      // Generate plan
+      const task = new Task({
+        type: 'agent',
+        executorId: this.id,
+        input: {
+          name: 'Plan Generation',
+          description: 'Generate execution plan',
+          prompt: input.prompt,
+          metadata: input.metadata
+        }
+      });
+
+      const plan = await this.plan(task);
+      if (plan.length === 0) {
+        throw new Error('Failed to generate execution plan');
+      }
+
+      // Handle plan visibility and confirmation
+      if (input.metadata?.showPlan) {
+        const planMessage = `Here's my plan:\n\n${plan.map((step, i) => `${i + 1}. ${step}`).join('\n')}`;
+        
+        // Add plan to conversation
+        conversation.add({
+          role: 'assistant',
+          content: planMessage,
+          timestamp: Date.now(),
+          metadata: {
+            type: 'plan',
+            planSteps: plan.length
+          }
+        });
+
+        // Store plan in memory
+        const planMemoryId = await this.remember(planMessage, 'system', {
+          type: 'execution_plan',
+          taskId: task.id,
+          plan
+        });
+
+        // Return early if this is just a plan request
+        if (input.metadata?.planOnly) {
+          return {
+            response: planMessage,
+            memoryId: planMemoryId,
+            completionTokens: 0,
+            promptTokens: 0,
+            lastExecutionTime: Date.now() - startTime,
+            type: 'plan'
+          };
+        }
+
+        // Wait for confirmation if required
+        if (input.metadata?.requirePlanConfirmation) {
+          await this.remember('Waiting for plan confirmation', 'system', {
+            type: 'plan_confirmation',
+            taskId: task.id,
+            status: 'pending'
+          });
+
+          return {
+            response: `${planMessage}\n\nPlease confirm if you want to proceed with this plan.`,
+            memoryId: planMemoryId,
+            completionTokens: 0,
+            promptTokens: 0,
+            lastExecutionTime: Date.now() - startTime,
+            type: 'plan_pending'
+          };
+        }
+      }
+
+      // Execute plan step by step
+      for (const step of plan) {
+        if (this._loopCount >= this._maxLoops) {
+          currentResponse += `\n\nReached maximum number of steps (${this._maxLoops}). Stopping execution.`;
+          break;
+        }
+
+        // Get conversation history
+        const history = conversation.getHistory({ maxMessages: 5 });
+        const toolContext = this.getTools()
+          .map(tool => `${tool.name}: ${tool.description}`)
+          .join('\n');
+
+        const enhancedInput = {
+          ...processedInput,
+          text: `
+Current Step (${this._loopCount + 1}/${plan.length}): ${step}
+
+Available Tools:
+${toolContext}
+
+Conversation History:
+${typeof history === 'string' ? history : history.map(msg => `${msg.role.toUpperCase()}: ${msg.content}`).join('\n')}
+Assistant: Let me execute this step carefully.`
+        };
+
+        // Generate response for current step
+        const response = await this._languageModel.generateText(enhancedInput);
+        completionTokens += response.tokens?.completion || 0;
+        promptTokens += response.tokens?.prompt || 0;
+
+        // Update current response
+        const stepResponse = response.text;
+        currentResponse = stepResponse;
+
+        // Check for tool usage in response
+        const identifiedTools = await this.identifyToolUsage(stepResponse);
+        if (identifiedTools.length > 0) {
+          // Execute identified tools
+          const outputs = await this.executeIdentifiedTools(identifiedTools);
+          Object.assign(toolOutputs, outputs);
+          
+          // Add tool names to tracking
+          identifiedTools.forEach(tool => {
+            if (!toolsUsed.includes(tool.toolName)) {
+              toolsUsed.push(tool.toolName);
+            }
+          });
+
+          // Add tool results to context
+          const toolResults = Object.entries(outputs)
+            .map(([name, output]) => `${name} result: ${JSON.stringify(output)}`)
+            .join('\n');
+
+          currentResponse += `\n\nTool Results:\n${toolResults}`;
+          
+          // Add step completion to conversation
+          conversation.add({
+            role: 'assistant',
+            content: `Step ${this._loopCount + 1} completed:\n${currentResponse}`,
+            timestamp: Date.now(),
+            metadata: {
+              completionTokens,
+              promptTokens,
+              toolCalls: identifiedTools.map(t => t.toolName),
+              model: this._languageModel.constructor.name,
+              tokens: input.prompt.length
+            }
+          });
+
+          // Store execution progress in memory instead
+          await this.remember(`Execution progress: Step ${this._loopCount + 1} of ${plan.length}`, 'system', {
+            type: 'execution_progress',
+            currentStep: this._loopCount + 1,
+            totalSteps: plan.length,
+            taskId: task.id
+          });
+        }
+
+        this._loopCount++;
+      }
+
+      // Add assistant's response to conversation
+      conversation.add({
+        role: 'assistant',
+        content: currentResponse,
+        metadata: {
+          completionTokens,
+          promptTokens,
+          toolCalls: toolsUsed,
+          model: this._languageModel.constructor.name
+        }
+      });
+
+      // Generate execution summary
+      const executionTime = Date.now() - startTime;
+      const summary = {
+        loopCount: this._loopCount,
+        toolsUsed: Array.from(new Set(toolsUsed)),
+        totalTokens: completionTokens + promptTokens,
+        executionTime,
+        averageStepTime: executionTime / this._loopCount,
+        performance: {
+          tokensPerStep: (completionTokens + promptTokens) / this._loopCount,
+          timePerStep: executionTime / this._loopCount
+        }
+      };
+
+      // Store final result with summary
       const memoryId = await this.remember(
-        `User: ${input.prompt}\nAssistant: ${response}`,
+        `Task completed successfully:\n\nUser: ${input.prompt}\nAssistant: ${currentResponse}\n\nExecution Summary:\n${JSON.stringify(summary, null, 2)}`,
         'conversation',
         {
           type: 'conversation',
           userInput: input.prompt,
           hasImages: !!input.images?.length,
-          metadata: input.metadata
+          chatId: input.metadata?.chatId,
+          loopCount: this._loopCount,
+          toolsUsed,
+          status: 'completed',
+          summary,
+          metadata: {
+            ...input.metadata,
+            completionTokens,
+            promptTokens,
+            toolOutputs,
+            executionTime,
+            averageStepTime: executionTime / this._loopCount,
+            successRate: 1.0 // All steps completed successfully if we reached this point
+          }
         }
       );
 
-      this._lastExecutionTime = Date.now() - startTime;
+      this._lastExecutionTime = executionTime;
+      this.updateMetrics(true, executionTime);
 
       return {
-        response,
+        response: currentResponse,
         memoryId,
-        completionTokens: 0, // Would need LLM to provide these
-        promptTokens: 0, // Would need LLM to provide these
-        lastExecutionTime: this._lastExecutionTime
+        completionTokens,
+        promptTokens,
+        lastExecutionTime: executionTime,
+        toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
+        toolOutputs: Object.keys(toolOutputs).length > 0 ? toolOutputs : undefined,
+        type: 'execution',
+        metadata: {
+          summary,
+          status: 'completed'
+        }
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await this.remember(
+      const errorMemoryId = await this.remember(
         `Conversation error: ${errorMessage}`,
         'error',
         {
           type: 'conversation_error',
-          error: errorMessage
+          error: errorMessage,
+          chatId: input.metadata?.chatId,
+          toolsUsed,
+          toolOutputs,
+          metadata: {
+            ...input.metadata,
+            completionTokens,
+            promptTokens
+          }
         }
       );
-      throw error;
+
+      this._lastExecutionTime = Date.now() - startTime;
+      this.updateMetrics(false, this._lastExecutionTime);
+
+      return {
+        response: `I encountered an error: ${errorMessage}`,
+        memoryId: errorMemoryId,
+        completionTokens,
+        promptTokens,
+        lastExecutionTime: this._lastExecutionTime,
+        toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
+        toolOutputs: Object.keys(toolOutputs).length > 0 ? toolOutputs : undefined
+      };
     }
+  }
+
+  private isResponseComplete(response: string): boolean {
+    // Check if response appears complete based on content markers
+    const completionMarkers = [
+      '.',
+      '!',
+      '?',
+      '\n\n',
+      'In conclusion',
+      'To summarize',
+      'Finally'
+    ];
+    
+    return completionMarkers.some(marker =>
+      response.trim().toLowerCase().endsWith(marker.toLowerCase()) ||
+      response.trim().toLowerCase().includes(marker.toLowerCase())
+    );
+  }
+
+  private async identifyToolUsage(response: string): Promise<{ toolName: string; input: any }[]> {
+    const tools = this.getTools();
+    
+    // Convert Zod schemas to JSON Schema format for better readability
+    const toolContext = tools.map(tool => {
+      let schemaDescription = 'No input schema defined';
+      
+      if (tool.inputSchema) {
+        try {
+          // Extract schema description from Zod
+          const zodSchema = tool.inputSchema;
+          
+          const extractZodSchema = (schema: any): any => {
+            if (!schema || !schema._def) return null;
+            
+            const def = schema._def;
+            
+            // Handle object schemas
+            if (def.typeName === 'ZodObject') {
+              const properties: Record<string, any> = {};
+              const required: string[] = [];
+              
+              Object.entries(def.shape()).forEach(([key, value]: [string, any]) => {
+                const fieldSchema = extractZodSchema(value);
+                if (fieldSchema) {
+                  properties[key] = fieldSchema;
+                  
+                  // Check if field is required
+                  if (!value._def.isOptional) {
+                    required.push(key);
+                  }
+                }
+              });
+              
+              return {
+                type: 'object',
+                properties,
+                required: required.length > 0 ? required : undefined
+              };
+            }
+            
+            // Handle array schemas
+            if (def.typeName === 'ZodArray') {
+              return {
+                type: 'array',
+                items: extractZodSchema(def.type),
+                description: def.description
+              };
+            }
+            
+            // Handle primitive types
+            const typeMap: Record<string, string> = {
+              ZodString: 'string',
+              ZodNumber: 'number',
+              ZodBoolean: 'boolean',
+              ZodDate: 'string',
+              ZodEnum: 'string',
+              ZodNull: 'null',
+              ZodUndefined: 'undefined'
+            };
+            
+            const type = typeMap[def.typeName];
+            if (type) {
+              const schema: any = { type };
+              
+              if (def.description) {
+                schema.description = def.description;
+              }
+              
+              // Handle enums
+              if (def.typeName === 'ZodEnum') {
+                schema.enum = def.values;
+              }
+              
+              return schema;
+            }
+            
+            return null;
+          };
+          
+          const extractedSchema = extractZodSchema(zodSchema);
+          if (extractedSchema) {
+            schemaDescription = JSON.stringify(extractedSchema, null, 2);
+          }
+        } catch (error) {
+          console.warn(`Failed to extract schema for tool ${tool.name}:`, error);
+        }
+      }
+      
+      return {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: schemaDescription
+      };
+    });
+
+    // Structured prompt for accurate tool identification
+    const toolIdentificationPrompt = {
+      text: `# Tool Identification Analysis
+
+## Response to Analyze
+\`\`\`
+${response.trim()}
+\`\`\`
+
+## Available Tools
+${toolContext.map(tool => `
+### ${tool.name}
+- Description: ${tool.description}
+- Schema:
+\`\`\`json
+${tool.inputSchema}
+\`\`\`
+`).join('\n')}
+
+## Requirements
+- Only select explicitly needed tools
+- Parameters must match schema exactly
+- Return empty list if no tools needed
+- Parameters must be derived from context
+
+## Response Format
+Your response must contain these sections:
+
+### Tool Selection
+[TOOLS]
+[
+  {
+    "toolName": "exact tool name",
+    "input": {
+      // parameters matching schema
+    }
+  }
+]
+[/TOOLS]
+
+### Validation
+[VALIDATION]
+- Tools required: [list]
+- Parameters verified: [yes/no]
+- Schema compatibility: [yes/no]
+[/VALIDATION]
+
+### Reasoning
+[REASONING]
+Explain tool selection and parameter choices
+[/REASONING]
+
+Provide your analysis below:
+`
+    };
+        try {
+      const toolIdentification = await this._languageModel.generateText(toolIdentificationPrompt);
+      let parsedTools: any[] = [];
+      try {
+        // More robust JSON extraction and parsing
+        const jsonContent = toolIdentification.text.replace(/^[\s\S]*?(\[{.*}])/m, '$1');
+        parsedTools = JSON.parse(jsonContent);
+      } catch (parseError) {
+        // Attempt alternate parsing strategies
+        try {
+          const matches = toolIdentification.text.match(/\[[\s\S]*?\]/g);
+          if (matches && matches.length > 0) {
+            parsedTools = JSON.parse(matches[0]);
+          }
+        } catch {
+          console.warn('Failed to parse tool identification response');
+          return [];
+        }
+      }
+
+      if (!Array.isArray(parsedTools)) {
+        console.warn('Tool identification response is not an array');
+        return [];
+      }
+
+      // Enhanced validation with schema checking
+      return parsedTools.filter(tool => {
+        if (!tool?.toolName || typeof tool.toolName !== 'string') {
+          return false;
+        }
+
+        const actualTool = tools.find(t => t.name === tool.toolName);
+        if (!actualTool) {
+          console.warn(`Tool not found: ${tool.toolName}`);
+          return false;
+        }
+
+        if (!this.validateToolInput(actualTool, tool.input)) {
+          console.warn(`Invalid input for tool ${tool.toolName}`);
+          return false;
+        }
+
+        return true;
+      });
+    } catch (error) {
+      console.error('Error in tool identification:', error);
+      return [];
+    }
+  }
+
+  private validateToolInput(tool: Tool, input: any): boolean {
+    if (!tool.inputSchema) {
+      return true; // No schema validation required
+    }
+
+    if (!input || typeof input !== 'object') {
+      return false;
+    }
+
+    // Use the tool's built-in validation
+    return tool.validate(input);
+  }
+
+  private async executeIdentifiedTools(
+    tools: { toolName: string; input: any }[]
+  ): Promise<Record<string, any>> {
+    const outputs: Record<string, any> = {};
+    
+    for (const { toolName, input } of tools) {
+      const tool = this.getTools().find(t => t.name === toolName);
+      if (tool) {
+        try {
+          outputs[toolName] = await tool.execute(input);
+        } catch (error) {
+          console.error(`Error executing tool ${toolName}:`, error);
+          outputs[toolName] = { error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+    }
+    
+    return outputs;
   }
 
   private async processPromptWithImages(input: TaskInput): Promise<PromptInput> {
@@ -265,8 +770,9 @@ export class Agent extends EventEmitter implements AgentInterface {
     };
   }
 
+
   private inferCapabilities(): AgentCapability[] {
-    return Array.from(this._tools.values()).map(tool => ({
+    return this.getTools().map(tool => ({
       name: tool.name,
       score: 1.0,
       metadata: {
@@ -319,8 +825,8 @@ export class Agent extends EventEmitter implements AgentInterface {
     return this._languageModel;
   }
 
-  getTools(): Tool[] {
-    return Array.from(this._tools.values());
+  getTools(): any[] {
+    return Array.from(this._tools.values())
   }
 
   addTool(tool: Tool): void {
@@ -347,7 +853,7 @@ export class Agent extends EventEmitter implements AgentInterface {
     });
   }
 
-  async execute(task: Task & { input?: TaskInput }): Promise<TaskExecutionResult> {
+  async execute(task: Task): Promise<TaskExecutionResult> {
     const startTime = Date.now();
     this._isExecuting = true;
     this._currentTask = task;
@@ -355,23 +861,37 @@ export class Agent extends EventEmitter implements AgentInterface {
 
     try {
       // Track task start in memory
-      const taskMemoryId = await this.remember(`Starting task: ${task.name}`, 'task', {
+      const taskMemoryId = await this.remember(`Starting task: ${task.toJSON().name}`, 'task', {
         taskId: task.id,
         status: TaskStatus.RUNNING
       });
 
-      // Create and execute task plan
+      // Generate and validate plan
       const steps = await this.plan(task);
+      if (steps.length === 0) {
+        throw new Error('Failed to generate a valid execution plan');
+      }
+
+      // Store plan in memory
+      await this.remember(`Generated execution plan for task ${task.id}:
+${steps.map((step, i) => `${i + 1}. ${step}`).join('\n')}`, 'system', {
+        type: 'execution_plan',
+        taskId: task.id,
+        plan: steps,
+        totalSteps: steps.length
+      });
+
+      // Initialize execution tracking
       const toolsUsed: string[] = [];
       let currentOutput: any = null;
       let completionTokens = 0;
       let promptTokens = 0;
-
+      
+      // Execute each step with proper tracking
       for (const step of steps) {
         if (this._loopCount >= this._maxLoops) {
-          // Log early return due to max steps
           const maxStepsMemoryId = await this.remember(
-            `Task stopped early: Maximum steps (${this._maxLoops}) reached`, 
+            `Task stopped early: Maximum steps (${this._maxLoops}) reached`,
             'system',
             {
               taskId: task.id,
@@ -396,24 +916,91 @@ export class Agent extends EventEmitter implements AgentInterface {
           };
         }
 
-        const tool = await this.findToolForTask(step);
-        if (tool) {
-          currentOutput = await tool.execute({ step, context: currentOutput });
-          toolsUsed.push(tool.name);
+        // Track step start
+        await this.remember(`Starting step ${this._loopCount + 1}/${steps.length}: ${step}`, 'system', {
+          type: 'step_execution',
+          taskId: task.id,
+          step,
+          stepNumber: this._loopCount + 1,
+          totalSteps: steps.length,
+          status: 'started'
+        });
 
-          await this.remember(`Step completed: ${step}`, 'task', {
+        // Prepare step execution with context
+        const stepInput: TaskInput = {
+          prompt: `
+Execute step ${this._loopCount + 1} of ${steps.length}:
+${step}
+
+Current Context:
+${currentOutput ? JSON.stringify(currentOutput, null, 2) : 'No previous output'}
+
+Requirements:
+1. Follow the step exactly as specified
+2. Use the exact tool mentioned
+3. Handle any errors gracefully
+4. Validate outputs before proceeding
+
+Proceed with execution.`,
+          metadata: {
             taskId: task.id,
             step,
-            toolUsed: tool.name,
-            output: currentOutput,
-            status: 'in_progress'
+            stepNumber: this._loopCount + 1,
+            totalSteps: steps.length,
+            previousOutput: currentOutput
+          }
+        };
+
+        // Execute step and validate result
+        const stepResult = await this.converse(stepInput);
+        completionTokens += stepResult.completionTokens;
+        promptTokens += stepResult.promptTokens;
+
+        // Validate step result
+        if (!stepResult.response || stepResult.response.includes('error')) {
+          await this.remember(`Step ${this._loopCount + 1} failed: ${stepResult.response}`, 'error', {
+            type: 'step_execution',
+            taskId: task.id,
+            step,
+            stepNumber: this._loopCount + 1,
+            totalSteps: steps.length,
+            error: stepResult.response,
+            status: 'failed'
           });
+          throw new Error(`Step ${this._loopCount + 1} failed: ${stepResult.response}`);
         }
+
+        // Update tracking with successful result
+        if (stepResult.toolsUsed) {
+          toolsUsed.push(...stepResult.toolsUsed);
+        }
+        
+        if (stepResult.toolOutputs) {
+          currentOutput = stepResult.toolOutputs;
+        }
+
+        // Record successful step completion
+        await this.remember(`Step ${this._loopCount + 1} completed successfully`, 'task', {
+          type: 'step_execution',
+          taskId: task.id,
+          step,
+          stepNumber: this._loopCount + 1,
+          totalSteps: steps.length,
+          toolsUsed: stepResult.toolsUsed,
+          toolOutputs: stepResult.toolOutputs,
+          output: currentOutput,
+          status: 'completed',
+          metrics: {
+            completionTokens: stepResult.completionTokens,
+            promptTokens: stepResult.promptTokens,
+            executionTime: stepResult.lastExecutionTime
+          }
+        });
 
         this._loopCount++;
       }
 
-      const finalMemoryId = await this.remember(`Task completed: ${task.name}`, 'result', {
+      const finalMemoryId = await this.remember(`Task completed: ${task.toJSON().name}`, 'result', {
         taskId: task.id,
         output: currentOutput,
         status: TaskStatus.COMPLETED
@@ -468,32 +1055,59 @@ export class Agent extends EventEmitter implements AgentInterface {
     this._metrics.lastExecutionTime = executionTime;
   }
 
+  private getOrCreateConversation(chatId?: string): Conversation {
+    const conversationId = chatId || 'default';
+    let conversation = this._conversations.get(conversationId);
+    
+    if (!conversation) {
+      conversation = new Conversation(this._systemPrompt);
+      this._conversations.set(conversationId, conversation);
+    }
+    
+    return conversation;
+  }
+
   async plan(task: Task): Promise<string[]> {
     try {
+      const taskJson = task.toJSON();
       let promptInput: PromptInput = {
         text: `
-Task: ${task.name}
-Description: ${task.description || 'No description provided'}
-Available Tools: ${Array.from(this._tools.keys()).join(', ')}
+Task: ${taskJson.name}
+Description: ${taskJson.input.description || 'No description provided'}
 
-Create a step-by-step plan to accomplish this task.
-Each step should be clear and actionable.
-Consider the available tools and their capabilities.
-`
+Available Tools:
+${this.getTools().map(tool => `- ${tool.name}: ${tool.description}`).join('\n')}
+
+Create a focused 3-step plan that:
+1. Each step must:
+   - Use a specific tool
+   - Have clear success criteria
+   - Include error handling
+2. Format: "[Action] using [Tool] with {params}"
+3. Example:
+   "Validate input using ValidationTool with {data: input, rules: ['required']}"
+
+Remember:
+- Maximum 3 steps
+- Each step must be self-contained
+- Include validation in each step
+- Handle errors gracefully
+
+Your plan (3 steps max):`
       };
       
       // Handle image processing if task has input with images
-      if (task.input?.images?.length) {
+      if (taskJson.input.images?.length) {
         const processedInput = await this.processPromptWithImages({
           prompt: promptInput.text,
-          images: task.input.images,
-          metadata: task.input.metadata
+          images: taskJson.input.images,
+          metadata: taskJson.input.metadata
         });
         
         // If model doesn't support images, extract text
         if (!this._languageModel.supportsImages?.()) {
           const extractedText = await Promise.all(
-            task.input.images.map(async (image: string) => {
+            taskJson.input.images.map(async (image: string) => {
               if (image.startsWith('http')) {
                 const imagePath = await this._imageHandler.downloadImage(image);
                 return await this._imageHandler.extractText(imagePath);
@@ -509,40 +1123,69 @@ Consider the available tools and their capabilities.
       }
 
       const response = await this._languageModel.generateText(promptInput);
-      return response
+      const steps = response.text
         .split('\n')
         .map(step => step.trim())
-        .filter(step => step.length > 0 && !step.startsWith('#') && !step.startsWith('Step'));
+        .filter(step =>
+          step.length > 0 &&
+          !step.startsWith('#') &&
+          !step.startsWith('Step') &&
+          step.includes(' using ') &&
+          step.includes(' with {')
+        );
+
+      // Enforce 3-step limit and validate format
+      const validSteps = steps
+        .slice(0, 3)
+        .map(step => {
+          // Ensure proper format: "[Action] using [Tool] with {params}"
+          const match = step.match(/^(.+) using ([A-Za-z]+) with ({.+})$/);
+          if (!match) {
+            console.warn(`Invalid step format: ${step}`);
+            return null;
+          }
+
+          const [_, action, tool, params] = match;
+          try {
+            // Validate that params is valid JSON
+            JSON.parse(params);
+            return step;
+          } catch (e) {
+            console.warn(`Invalid params JSON in step: ${step}`);
+            return null;
+          }
+        })
+        .filter((step): step is string => step !== null);
+
+      if (validSteps.length === 0) {
+        console.warn('No valid steps generated, falling back to default');
+        return [`Execute task: ${task.toJSON().name}`];
+      }
+
+      return validSteps;
     } catch (error) {
       console.error('Error generating task plan:', error);
-      return [`Execute task: ${task.name}`];
+      return [`Execute task: ${task.toJSON().name}`];
     }
-  }
-
-  private async processTaskInput(task: Task): Promise<PromptInput> {
-    if (!task.input) {
-      return { text: task.name };
-    }
-
-    return this.processPromptWithImages(task.input);
   }
 
   async findToolForTask(step: string): Promise<Tool | undefined> {
     const prompt = `
-Step: ${step}
-Available Tools: ${Array.from(this._tools.entries()).map(([name, tool]) =>
-  `${name} - ${tool.description}`
-).join('\n')}
+    Step: ${step}
+    Available Tools: ${this.getTools().map(tool =>
+      `${tool.name} - ${tool.description}`
+    ).join('\n')}
 
-Which tool would be most appropriate for this step? Respond with just the tool name.
-`;
+    Which tool would be most appropriate for this step? Respond with just the tool name.
+    `;
 
     try {
-      const toolName = await this._languageModel.generateText(prompt);
-      return this._tools.get(toolName.trim());
+      const response = await this._languageModel.generateText(prompt);
+      const toolName = response.text.trim();
+      return this.getTools().find(tool => tool.name === toolName);
     } catch (error) {
       console.error('Error selecting tool:', error);
-      return Array.from(this._tools.values())[0];
+      return this.getTools()[0];
     }
   }
 
@@ -581,5 +1224,12 @@ Which tool would be most appropriate for this step? Respond with just the tool n
     await this._memory.clear();
     this._tools.clear();
     this._taskMemories.clear();
+    this._conversations.clear();
+  }
+
+  private updateConversationSystemPrompts(): void {
+    for (const conversation of this._conversations.values()) {
+      conversation.setSystemPrompt(this._systemPrompt);
+    }
   }
 }

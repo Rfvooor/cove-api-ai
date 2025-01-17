@@ -21,6 +21,15 @@ The Language Model Integration System provides a unified interface for interacti
   - JSON mode
   - System messages
 
+### OpenRouter
+- Unified access to multiple AI providers
+- Features:
+  - Single API for multiple models
+  - Cost optimization
+  - Automatic fallback
+  - Usage tracking
+  - Model performance analytics
+
 ### Anthropic
 - Models: Claude-2, Claude-instant, Claude-1
 - Features:
@@ -70,12 +79,55 @@ const modelManager = new LanguageModelManager({
     huggingface: {
       apiKey: process.env.HF_API_KEY,
       defaultModel: 'custom-model'
+    },
+    openrouter: {
+      apiKey: process.env.OPENROUTER_API_KEY,
+      defaultModel: 'anthropic/claude-2',
+      fallbackStrategy: 'sequential',
+      costOptimization: {
+        maxCost: 0.05,
+        preferredModels: ['openai/gpt-3.5-turbo', 'anthropic/claude-instant']
+      }
     }
   }
 });
 ```
 
 ### Provider-Specific Usage
+
+#### OpenRouter
+```typescript
+const openrouter = await modelManager.getProvider('openrouter');
+
+// Basic completion with model selection
+const response = await openrouter.complete({
+  messages: [{ role: 'user', content: 'Analyze this data' }],
+  model: 'anthropic/claude-2',
+  temperature: 0.7,
+  maxTokens: 1000
+});
+
+// Automatic fallback configuration
+const fallbackResponse = await openrouter.complete({
+  messages: [{ role: 'user', content: 'Complex analysis task' }],
+  models: ['anthropic/claude-2', 'openai/gpt-4', 'google/palm-2'],
+  fallbackStrategy: 'sequential',
+  fallbackConditions: {
+    timeout: 5000,
+    errorTypes: ['rate_limit', 'server_error']
+  }
+});
+
+// Cost optimization
+const optimizedResponse = await openrouter.complete({
+  messages: [{ role: 'user', content: 'Simple task' }],
+  costOptimization: {
+    maxCost: 0.05,
+    preferredModels: ['openai/gpt-3.5-turbo', 'anthropic/claude-instant'],
+    performanceThreshold: 0.8
+  }
+});
+```
 
 #### OpenAI
 ```typescript
@@ -179,6 +231,29 @@ interface OpenAIOptions extends BaseModelOptions {
 }
 ```
 
+#### OpenRouter Options
+```typescript
+interface OpenRouterOptions extends BaseModelOptions {
+  models?: string[];                    // List of models to try
+  fallbackStrategy?: 'sequential' | 'parallel' | 'cost-optimized';
+  fallbackConditions?: {
+    timeout?: number;                   // Timeout in milliseconds
+    errorTypes?: string[];             // Error types that trigger fallback
+    maxAttempts?: number;              // Maximum fallback attempts
+  };
+  costOptimization?: {
+    maxCost?: number;                  // Maximum cost per request
+    preferredModels?: string[];        // Preferred models for cost optimization
+    performanceThreshold?: number;     // Minimum performance score (0-1)
+  };
+  routingStrategy?: {
+    type: 'round-robin' | 'weighted' | 'performance-based';
+    weights?: Record<string, number>;  // Model weights for weighted strategy
+    metrics?: string[];               // Metrics for performance-based routing
+  };
+}
+```
+
 #### Claude Options
 ```typescript
 interface ClaudeOptions extends BaseModelOptions {
@@ -264,6 +339,7 @@ const performance = await model.getPerformance();
 ## 📚 Resources
 
 - [OpenAI Documentation](https://platform.openai.com/docs)
+- [OpenRouter Documentation](https://openrouter.ai/docs)
 - [Claude Documentation](https://docs.anthropic.com)
 - [Cohere Documentation](https://docs.cohere.ai)
 - [HuggingFace Documentation](https://huggingface.co/docs)

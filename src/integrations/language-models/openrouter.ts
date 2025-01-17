@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { BaseLanguageModelIntegration, LanguageModelConfig } from './base.js';
-import { ModelCapabilities } from '../../core/base-language-model.js';
+import { ModelCapabilities, PromptInput, GenerateTextResult } from '../../core/base-language-model.js';
 
 export interface OpenRouterConfig extends LanguageModelConfig {
   baseURL?: string;
@@ -9,6 +9,8 @@ export interface OpenRouterConfig extends LanguageModelConfig {
 const OPENROUTER_CAPABILITIES: Required<ModelCapabilities> = {
   supportsEmbeddings: false,
   supportsTokenCounting: false,
+  supportsImages: false,
+  supportsStreaming: false,
   maxContextLength: 32768, // Using Claude-2's context window as default
   supportedModels: [
     'anthropic/claude-2',
@@ -18,7 +20,12 @@ const OPENROUTER_CAPABILITIES: Required<ModelCapabilities> = {
     'meta-llama/llama-2-13b-chat',
     'openai/gpt-4',
     'openai/gpt-3.5-turbo'
-  ]
+  ],
+  maxParallelRequests: 5,
+  costPerToken: {
+    prompt: 0.0001,
+    completion: 0.0002
+  }
 };
 
 export class OpenRouterIntegration extends BaseLanguageModelIntegration {
@@ -47,33 +54,37 @@ export class OpenRouterIntegration extends BaseLanguageModelIntegration {
     });
   }
 
-  async generateText(prompt: string, options: Partial<OpenRouterConfig> = {}): Promise<string> {
-    try {
-      this.validateMaxLength(prompt, this.capabilities.maxContextLength);
+  async generateText(
+    prompt: string | PromptInput,
+    options: Partial<OpenRouterConfig> = {}
+  ): Promise<GenerateTextResult> {
+    return this.wrapGenerateText(
+      async (promptText: string, opts?: Partial<OpenRouterConfig>) => {
+        this.validateMaxLength(promptText, this.capabilities.maxContextLength);
 
-      const {
-        temperature = this.config.temperature, 
-        maxTokens = this.config.maxTokens,
-        model = this.config.model
-      } = options;
+        const {
+          temperature = this.config.temperature,
+          maxTokens = this.config.maxTokens,
+          model = this.config.model
+        } = opts || {};
 
-      const response = await this.client.chat.completions.create({
-        model: model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: temperature,
-        max_tokens: maxTokens
-      });
+        const response = await this.client.chat.completions.create({
+          model: model,
+          messages: [{ role: 'user', content: promptText }],
+          temperature: temperature,
+          max_tokens: maxTokens,
+        });
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new Error('No content received from OpenRouter API');
-      }
+        const content = response.choices[0]?.message?.content;
+        if (!content) {
+          throw new Error('No content received from OpenRouter API');
+        }
 
-      return content;
-    } catch (error) {
-      console.error('OpenRouter API Error:', error);
-      throw new Error('Failed to generate text using OpenRouter');
-    }
+        return content;
+      },
+      prompt,
+      options
+    );
   }
 
   async listAvailableModels(): Promise<string[]> {

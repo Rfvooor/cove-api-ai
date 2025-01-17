@@ -1,10 +1,17 @@
-import { Tool, type ToolConfig } from '../tool.js';
-import z from 'zod';
+import { Tool, type ToolConfig, type SchemaType } from '../tool.js';
 
 // Base URL for the DexScreener API
 const DEXSCREENER_API_BASE_URL = 'https://api.dexscreener.com/latest';
 
-// Types
+// Constants for validation
+const SORT_BY_VALUES = ['liquidity', 'volume', 'txCount', 'uniqueMakers', 'priceChange'] as const;
+const SORT_ORDER_VALUES = ['asc', 'desc'] as const;
+const MARKETS = ['Raydium', 'Raydium CP', 'Raydium Clamm', 'Meteora', 'Meteora DLMM', 'Fluxbeam', 'Pump.fun', 'OpenBook', 'OpenBook V2', 'Orca'] as const;
+
+type SortBy = typeof SORT_BY_VALUES[number];
+type SortOrder = typeof SORT_ORDER_VALUES[number];
+type Market = typeof MARKETS[number];
+
 interface DexScreenerPair {
   chainId: string;
   dexId: string;
@@ -50,16 +57,19 @@ type DexScreenerInput = {
 } | {
   operation: 'searchPairs';
   query: string;
+  sortBy?: SortBy;
+  sortOrder?: SortOrder;
+  markets?: Market[];
+  offset?: number;
+  limit?: number;
 } | {
   operation: 'getTokenPairs';
   tokenAddress: string;
+  sortBy?: SortBy;
+  sortOrder?: SortOrder;
+  offset?: number;
+  limit?: number;
 };
-
-interface DexScreenerConfig {
-  name?: string;
-  description?: string;
-  rateLimitPerMinute?: number;
-}
 
 interface DexScreenerResponse {
   success: boolean;
@@ -67,21 +77,132 @@ interface DexScreenerResponse {
   error?: string;
 }
 
-// Input schema
-const dexScreenerInputSchema = z.object({
-  operation: z.string(),
-  chainId: z.string().optional(),
-  pairAddress: z.string().optional(),
-  query: z.string().optional(),
-  tokenAddress: z.string().optional()
-});
+interface DexScreenerConfig {
+  name?: string;
+  description?: string;
+  rateLimitPerMinute?: number;
+}
 
-// Output schema
-const dexScreenerOutputSchema = z.object({
-  success: z.boolean(),
-  data: z.array(z.any()),
-  error: z.string().optional()
-});
+// Input schema in JSON Schema format
+const inputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    operation: {
+      type: 'string',
+      enum: [
+        'getPairsByChainAndPair',
+        'searchPairs',
+        'getTokenPairs'
+      ],
+      description: 'The operation to perform'
+    },
+    chainId: {
+      type: 'string',
+      description: 'Blockchain network identifier'
+    },
+    pairAddress: {
+      type: 'string',
+      description: 'Trading pair contract address'
+    },
+    query: {
+      type: 'string',
+      description: 'Search query (token name, symbol, or address)'
+    },
+    sortBy: {
+      type: 'string',
+      enum: [...SORT_BY_VALUES],
+      description: 'Field to sort results by'
+    },
+    sortOrder: {
+      type: 'string',
+      enum: [...SORT_ORDER_VALUES],
+      description: 'Sort direction'
+    },
+    markets: {
+      type: 'array',
+      items: {
+        type: 'string',
+        enum: [...MARKETS]
+      },
+      description: 'List of DEX markets to include'
+    },
+    tokenAddress: {
+      type: 'string',
+      description: 'Token contract address'
+    },
+    offset: {
+      type: 'number',
+      description: 'Number of items to skip',
+      minimum: 0
+    },
+    limit: {
+      type: 'number',
+      description: 'Maximum number of items to return',
+      minimum: 1,
+      maximum: 100,
+      default: 20
+    }
+  },
+  required: ['operation']
+};
+
+// Output schema in JSON Schema format
+const outputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    success: {
+      type: 'boolean',
+      description: 'Whether the operation was successful'
+    },
+    data: {
+      type: 'array',
+      description: 'Array of trading pair data',
+      items: {
+        type: 'object',
+        properties: {
+          chainId: { type: 'string' },
+          dexId: { type: 'string' },
+          pairAddress: { type: 'string' },
+          baseToken: {
+            type: 'object',
+            properties: {
+              address: { type: 'string' },
+              name: { type: 'string' },
+              symbol: { type: 'string' }
+            }
+          },
+          quoteToken: {
+            type: 'object',
+            properties: {
+              address: { type: 'string' },
+              name: { type: 'string' },
+              symbol: { type: 'string' }
+            }
+          },
+          priceUsd: { type: 'string' },
+          volume: {
+            type: 'object',
+            properties: {
+              h1: { type: 'number' },
+              h24: { type: 'number' }
+            }
+          },
+          liquidity: {
+            type: 'object',
+            properties: {
+              usd: { type: 'number' }
+            }
+          }
+        }
+      }
+    },
+    error: {
+      type: 'string',
+      description: 'Error message if operation failed'
+    }
+  },
+  required: ['success', 'data']
+};
 
 export class DexScreenerTool extends Tool<DexScreenerInput, DexScreenerResponse> {
   private lastRequestTime: number = 0;
@@ -90,9 +211,22 @@ export class DexScreenerTool extends Tool<DexScreenerInput, DexScreenerResponse>
   constructor(config: DexScreenerConfig = {}) {
     const toolConfig: ToolConfig<DexScreenerInput, DexScreenerResponse> = {
       name: config.name || 'dexscreener',
-      description: config.description || 'Interact with DexScreener API for DEX pair data',
-      inputSchema: dexScreenerInputSchema as any,
-      outputSchema: dexScreenerOutputSchema,
+      description: config.description || `DexScreener API tool for DEX trading pair data. Available operations:
+      - getPairsByChainAndPair: Get trading pair details by chain and address
+      - searchPairs: Search for trading pairs by token name, symbol, or address
+      - getTokenPairs: Get all trading pairs for a specific token
+
+      Features:
+      - Real-time price data
+      - Trading volume metrics
+      - Liquidity information
+      - Transaction counts
+      - Price change tracking
+      - Multi-DEX support
+      
+      Supported DEXs: ${[...MARKETS].join(', ')}`,
+      inputSchema,
+      outputSchema,
       execute: (input: DexScreenerInput) => this.execute(input)
     };
 
@@ -138,16 +272,31 @@ export class DexScreenerTool extends Tool<DexScreenerInput, DexScreenerResponse>
         }
 
         case 'searchPairs': {
+          const queryParams = new URLSearchParams({
+            q: input.query,
+            ...(input.sortBy && { sort_by: input.sortBy }),
+            ...(input.sortOrder && { sort_order: input.sortOrder }),
+            ...(input.markets && { markets: input.markets.join(',') }),
+            ...(input.offset !== undefined && { offset: input.offset.toString() }),
+            ...(input.limit !== undefined && { limit: input.limit.toString() })
+          });
           const data = await this.makeRequest(
-            `/dex/search/?q=${encodeURIComponent(input.query)}`
+            `/dex/search/?${queryParams.toString()}`
           );
           return { success: true, data: data.pairs || [] };
         }
 
         case 'getTokenPairs': {
-          const data = await this.makeRequest(
-            `/dex/tokens/${input.tokenAddress}`
-          );
+          const queryParams = new URLSearchParams({
+            ...(input.sortBy && { sort_by: input.sortBy }),
+            ...(input.sortOrder && { sort_order: input.sortOrder }),
+            ...(input.offset !== undefined && { offset: input.offset.toString() }),
+            ...(input.limit !== undefined && { limit: input.limit.toString() })
+          });
+          const endpoint = `/dex/tokens/${input.tokenAddress}${
+            queryParams.toString() ? `?${queryParams.toString()}` : ''
+          }`;
+          const data = await this.makeRequest(endpoint);
           return { success: true, data: data.pairs || [] };
         }
 

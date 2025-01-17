@@ -1,9 +1,15 @@
-import { OpenAI as LangchainOpenAI } from 'langchain/llms/openai';
-import { ChatOpenAI } from 'langchain/chat_models/openai';
-import { PromptTemplate } from 'langchain/prompts';
-import { LLMChain } from 'langchain/chains';
+import { OpenAI as LangchainOpenAI, ChatOpenAI } from '@langchain/openai';
+import { PromptTemplate } from '@langchain/core/prompts';
+import { RunnableSequence } from '@langchain/core/runnables';
+import { StringOutputParser } from '@langchain/core/output_parsers';
 import { BaseLanguageModelIntegration, LanguageModelConfig } from './base.js';
-import { ModelCapabilities } from '../../core/base-language-model.js';
+import {
+  ModelCapabilities,
+  PromptInput,
+  GenerateTextResult,
+  GenerateTextOptions
+} from '../../core/base-language-model.js';
+import { classifyError } from '../../utils/error-utils.js';
 
 export interface LangchainConfig extends LanguageModelConfig {
   // Langchain-specific config options can be added here
@@ -12,6 +18,8 @@ export interface LangchainConfig extends LanguageModelConfig {
 const LANGCHAIN_CAPABILITIES: Required<ModelCapabilities> = {
   supportsEmbeddings: true,
   supportsTokenCounting: true,
+  supportsImages: false,
+  supportsStreaming: true,
   maxContextLength: 16384, // Using GPT-4's context window as default
   supportedModels: [
     'gpt-4',
@@ -19,7 +27,12 @@ const LANGCHAIN_CAPABILITIES: Required<ModelCapabilities> = {
     'gpt-3.5-turbo',
     'gpt-3.5-turbo-16k',
     'text-embedding-ada-002'
-  ]
+  ],
+  maxParallelRequests: 5,
+  costPerToken: {
+    prompt: 0.0015,    // Using GPT-3.5 rates as default
+    completion: 0.002
+  }
 };
 
 export class LangchainIntegration extends BaseLanguageModelIntegration {
@@ -48,14 +61,15 @@ export class LangchainIntegration extends BaseLanguageModelIntegration {
         });
   }
 
-  async generateText(prompt: string, options: Partial<LangchainConfig> = {}): Promise<string> {
+  async generateText(prompt: string | PromptInput, options: GenerateTextOptions = {}): Promise<GenerateTextResult> {
+    const startTime = Date.now();
     try {
-      this.validateMaxLength(prompt, this.capabilities.maxContextLength);
+      const promptText = typeof prompt === 'string' ? prompt : prompt.text;
+      this.validateMaxLength(promptText, this.capabilities.maxContextLength);
 
       const {
-        temperature = this.config.temperature, 
-        maxTokens = this.config.maxTokens,
-        model = this.config.model
+        temperature = this.config.temperature,
+        maxTokens = this.config.maxTokens
       } = options;
 
       // Create a prompt template
@@ -64,22 +78,50 @@ export class LangchainIntegration extends BaseLanguageModelIntegration {
         inputVariables: ["input"]
       });
 
-      // Create an LLM chain
-      const chain = new LLMChain({
-        llm: this.openAIModel,
-        prompt: promptTemplate
-      });
+      // Create and run a sequence with output parsing
+      const chain = RunnableSequence.from([
+        promptTemplate,
+        this.openAIModel,
+        new StringOutputParser()
+      ]);
 
-      // Run the chain
-      const response = await chain.call({ input: prompt });
-      if (!response.text) {
+      const response = await chain.invoke({ input: promptText });
+      if (!response) {
         throw new Error('No content received from Langchain');
       }
 
-      return response.text;
+      // Estimate token counts
+      const promptTokens = await this.countTokens(promptText);
+      const completionTokens = await this.countTokens(response);
+
+      const result: GenerateTextResult = {
+        text: response,
+        tokens: {
+          prompt: promptTokens,
+          completion: completionTokens,
+          total: promptTokens + completionTokens
+        },
+        modelName: this.config.model,
+        finishReason: 'stop'
+      };
+
+      await this.updateMetrics(startTime, result);
+      return result;
     } catch (error) {
-      console.error('Langchain API Error:', error);
-      throw new Error('Failed to generate text using Langchain');
+      const errorResult: GenerateTextResult = {
+        text: '',
+        tokens: { prompt: 0, completion: 0, total: 0 },
+        modelName: this.config.model,
+        finishReason: 'error',
+        error: {
+          code: error instanceof Error ? error.constructor.name : 'unknown',
+          message: error instanceof Error ? error.message : String(error),
+          type: classifyError(error)
+        }
+      };
+
+      await this.updateMetrics(startTime, errorResult, error instanceof Error ? error : undefined);
+      return errorResult;
     }
   }
 
@@ -136,17 +178,15 @@ export class LangchainIntegration extends BaseLanguageModelIntegration {
   }
 
   async createPromptTemplate(template: string, inputVariables: string[]): Promise<PromptTemplate> {
-    return new PromptTemplate({
-      template,
-      inputVariables
-    });
+    return PromptTemplate.fromTemplate(template);
   }
 
-  async createChain(promptTemplate: PromptTemplate): Promise<LLMChain> {
-    return new LLMChain({
-      llm: this.openAIModel,
-      prompt: promptTemplate
-    });
+  async createChain(promptTemplate: PromptTemplate): Promise<RunnableSequence<any, string>> {
+    return RunnableSequence.from([
+      promptTemplate,
+      this.openAIModel,
+      new StringOutputParser()
+    ]);
   }
 
   override updateConfig(newConfig: Partial<LangchainConfig>): void {

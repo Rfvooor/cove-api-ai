@@ -1,5 +1,10 @@
 import { BaseLanguageModelIntegration, LanguageModelConfig } from './base.js';
-import { ModelCapabilities } from '../../core/base-language-model.js';
+import {
+  ModelCapabilities,
+  PromptInput,
+  GenerateTextResult,
+  GenerateTextOptions
+} from '../../core/base-language-model.js';
 
 export interface HuggingFaceConfig extends LanguageModelConfig {
   endpoint?: string;
@@ -10,6 +15,8 @@ export interface HuggingFaceConfig extends LanguageModelConfig {
 const HUGGINGFACE_CAPABILITIES: Required<ModelCapabilities> = {
   supportsEmbeddings: true,
   supportsTokenCounting: false,
+  supportsImages: true,
+  supportsStreaming: false,
   maxContextLength: 2048, // Default context window, varies by model
   supportedModels: [
     'gpt2',
@@ -22,7 +29,12 @@ const HUGGINGFACE_CAPABILITIES: Required<ModelCapabilities> = {
     'bigscience/bloom',
     'sentence-transformers/all-mpnet-base-v2', // For embeddings
     'sentence-transformers/all-MiniLM-L6-v2'   // For embeddings
-  ]
+  ],
+  maxParallelRequests: 5,
+  costPerToken: {
+    prompt: 0.0001,
+    completion: 0.0001
+  }
 };
 
 export class HuggingFaceIntegration extends BaseLanguageModelIntegration {
@@ -40,50 +52,54 @@ export class HuggingFaceIntegration extends BaseLanguageModelIntegration {
     this.waitForModel = config.waitForModel ?? true;
   }
 
-  async generateText(prompt: string, options: Partial<HuggingFaceConfig> = {}): Promise<string> {
-    try {
-      this.validateMaxLength(prompt, this.capabilities.maxContextLength);
+  async generateText(
+    prompt: string | PromptInput,
+    options: Partial<HuggingFaceConfig> = {}
+  ): Promise<GenerateTextResult> {
+    return this.wrapGenerateText(
+      async (promptText: string, opts?: Partial<HuggingFaceConfig>) => {
+        this.validateMaxLength(promptText, this.capabilities.maxContextLength);
 
-      const {
-        temperature = this.config.temperature,
-        maxTokens = this.config.maxTokens,
-        model = this.config.model
-      } = options;
+        const {
+          temperature = this.config.temperature,
+          maxTokens = this.config.maxTokens,
+          model = this.config.model
+        } = opts || {};
 
-      const response = await fetch(`${this.endpoint}/${model}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.config.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            temperature,
-            max_new_tokens: maxTokens,
-            return_full_text: false
+        const response = await fetch(`${this.endpoint}/${model}`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.config.apiKey}`,
+            'Content-Type': 'application/json'
           },
-          options: {
-            wait_for_model: this.waitForModel
-          }
-        })
-      });
+          body: JSON.stringify({
+            inputs: promptText,
+            parameters: {
+              temperature,
+              max_new_tokens: maxTokens,
+              return_full_text: false
+            },
+            options: {
+              wait_for_model: this.waitForModel
+            }
+          })
+        });
 
-      if (!response.ok) {
-        throw new Error(`HuggingFace API error: ${response.statusText}`);
-      }
+        if (!response.ok) {
+          throw new Error(`HuggingFace API error: ${response.statusText}`);
+        }
 
-      const result = await response.json() as Array<{ generated_text: string }>;
+        const result = await response.json() as Array<{ generated_text: string }>;
 
-      if (!result || result.length === 0) {
-        throw new Error('No content received from HuggingFace API');
-      }
+        if (!result || result.length === 0) {
+          throw new Error('No content received from HuggingFace API');
+        }
 
-      return result[0].generated_text;
-    } catch (error) {
-      console.error('HuggingFace API Error:', error);
-      throw new Error('Failed to generate text using HuggingFace');
-    }
+        return result[0].generated_text;
+      },
+      prompt,
+      options
+    );
   }
 
   async generateEmbedding(text: string): Promise<number[]> {

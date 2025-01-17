@@ -1,4 +1,5 @@
-import { Pool, PoolConfig, QueryResult } from 'pg';
+import { PoolConfig, QueryResult } from 'pg';
+import Pool from 'pg';
 import { BaseMemoryStore, MemoryStoreConfig, VectorSearchResult, MemoryQueryOptions, MemoryEntry } from './base.js';
 
 export interface PostgresMemoryConfig extends MemoryStoreConfig {

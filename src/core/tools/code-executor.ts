@@ -1,12 +1,15 @@
-import { Tool } from '../tool.js';
+import { Tool, type ToolConfig, type SchemaType } from '../tool.js';
 import { spawn } from 'child_process';
 import { writeFile, mkdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
+const SUPPORTED_LANGUAGES = ['javascript', 'typescript', 'python', 'ruby', 'shell'] as const;
+type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
+
 interface CodeExecutionInput {
   code: string;
-  language: string;
+  language: SupportedLanguage;
   timeout?: number;
   args?: string[];
   env?: Record<string, string>;
@@ -20,53 +23,106 @@ interface CodeExecutionOutput {
 }
 
 const DEFAULT_WORK_DIR = './tmp/code-execution';
-const SUPPORTED_LANGUAGES = new Set([
-  'javascript',
-  'typescript',
-  'python',
-  'ruby',
-  'shell'
-]);
+
+// Input schema in JSON Schema format
+const inputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    code: {
+      type: 'string',
+      description: 'The source code to execute'
+    },
+    language: {
+      type: 'string',
+      enum: [...SUPPORTED_LANGUAGES],
+      description: 'Programming language of the code'
+    },
+    timeout: {
+      type: 'number',
+      description: 'Maximum execution time in milliseconds',
+      minimum: 0,
+      maximum: 30000,
+      default: 5000
+    },
+    args: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Command line arguments to pass to the program'
+    },
+    env: {
+      type: 'object',
+      description: 'Environment variables to set during execution',
+      properties: {
+        // Define common environment variables
+        NODE_ENV: { type: 'string' },
+        PATH: { type: 'string' },
+        HOME: { type: 'string' },
+        USER: { type: 'string' },
+        TEMP: { type: 'string' },
+        // Allow any other string values
+        '*': { type: 'string' }
+      }
+    }
+  },
+  required: ['code', 'language']
+};
+
+// Output schema in JSON Schema format
+const outputSchema: SchemaType = {
+  type: 'object',
+  properties: {
+    stdout: {
+      type: 'string',
+      description: 'Standard output from the program'
+    },
+    stderr: {
+      type: 'string',
+      description: 'Standard error output from the program'
+    },
+    exitCode: {
+      type: 'number',
+      description: 'Program exit code (0 indicates success)'
+    },
+    executionTime: {
+      type: 'number',
+      description: 'Total execution time in milliseconds'
+    }
+  },
+  required: ['stdout', 'stderr', 'exitCode', 'executionTime']
+};
 
 export class CodeExecutor extends Tool<CodeExecutionInput, CodeExecutionOutput> {
   private readonly workDir: string;
 
   constructor(workDir: string = DEFAULT_WORK_DIR) {
-    const config = {
+    const toolConfig: ToolConfig<CodeExecutionInput, CodeExecutionOutput> = {
       name: 'code-executor',
-      description: 'Executes code in various programming languages with safety constraints',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          code: { type: 'string' },
-          language: { type: 'string' },
-          timeout: { type: 'number', optional: true },
-          args: { type: 'array', items: { type: 'string' }, optional: true },
-          env: { type: 'object', optional: true }
-        },
-        required: ['code', 'language']
-      } as any,
-      outputSchema: {
-        type: 'object',
-        properties: {
-          stdout: { type: 'string' },
-          stderr: { type: 'string' },
-          exitCode: { type: 'number' },
-          executionTime: { type: 'number' }
-        }
-      } as any,
+      description: `Executes code in various programming languages with safety constraints.
+      Supported languages: ${[...SUPPORTED_LANGUAGES].join(', ')}
+      
+      Features:
+      - Sandboxed execution environment
+      - Configurable timeout
+      - Command line arguments support
+      - Environment variables support
+      - Automatic cleanup
+      
+      Security:
+      - No network access
+      - Limited file system access
+      - Resource usage limits
+      - Input validation
+      - Process isolation`,
+      inputSchema,
+      outputSchema,
       execute: (input: CodeExecutionInput) => this.executeCode(input)
     };
 
-    super(config);
+    super(toolConfig);
     this.workDir = workDir;
   }
 
   private async executeCode(input: CodeExecutionInput): Promise<CodeExecutionOutput> {
-    if (!SUPPORTED_LANGUAGES.has(input.language.toLowerCase())) {
-      throw new Error(`Unsupported language: ${input.language}`);
-    }
-
     const sessionId = uuidv4();
     const sessionDir = join(this.workDir, sessionId);
     const startTime = Date.now();
@@ -107,8 +163,8 @@ export class CodeExecutor extends Tool<CodeExecutionInput, CodeExecutionOutput> 
     }
   }
 
-  private getFilename(language: string): string {
-    switch (language.toLowerCase()) {
+  private getFilename(language: SupportedLanguage): string {
+    switch (language) {
       case 'javascript':
         return 'script.js';
       case 'typescript':
@@ -119,13 +175,11 @@ export class CodeExecutor extends Tool<CodeExecutionInput, CodeExecutionOutput> 
         return 'script.rb';
       case 'shell':
         return 'script.sh';
-      default:
-        throw new Error(`Unsupported language: ${language}`);
     }
   }
 
-  private getCommand(language: string, filepath: string): [string, string[]] {
-    switch (language.toLowerCase()) {
+  private getCommand(language: SupportedLanguage, filepath: string): [string, string[]] {
+    switch (language) {
       case 'javascript':
         return ['node', [filepath]];
       case 'typescript':
@@ -136,13 +190,11 @@ export class CodeExecutor extends Tool<CodeExecutionInput, CodeExecutionOutput> 
         return ['ruby', [filepath]];
       case 'shell':
         return ['bash', [filepath]];
-      default:
-        throw new Error(`Unsupported language: ${language}`);
     }
   }
 
   private async runCode(
-    language: string,
+    language: SupportedLanguage,
     filepath: string,
     options: {
       timeout: number;

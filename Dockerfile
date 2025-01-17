@@ -74,7 +74,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s \
   CMD wget --no-verbose --tries=1 --spider http://localhost:4000/health || exit 1
 
 # Runtime configuration and startup
-CMD ["node", "--max-old-space-size=4096", "dist/index.js"]
+CMD ["node", "--max-old-space-size=4096", "dist/cove-entrypoint.js"]
 
 # Optional: Add metadata labels
 LABEL maintainer="Your Name <your.email@example.com>"

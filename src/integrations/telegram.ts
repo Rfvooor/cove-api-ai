@@ -1,7 +1,8 @@
 import Telegraf, { Context as TelegrafContext } from 'telegraf';
+import { randomUUID } from 'crypto';
 import { Agent } from '../core/agent.js';
 import { SentimentAnalyzer } from '../utils/sentiment-analyzer.js';
-import { Task, TaskResult } from '../core/task.js';
+import { Task, TaskResult, TaskStatus } from '../core/task.js';
 
 export interface TelegramIntegrationConfig {
   token: string;
@@ -62,7 +63,7 @@ export class TelegramIntegration {
           },
           metadata: {
             type: 'telegram_message',
-            importance: sentiment * 0.6 + 0.4, // Base importance on sentiment with minimum threshold
+            importance: sentiment * 0.6 + 0.4,
             isConsolidated: false,
             consolidationScore: 0,
             isArchived: false
@@ -70,18 +71,43 @@ export class TelegramIntegration {
         };
 
         const task = new Task({
-          name: 'Process Telegram message',
-          description: JSON.stringify(agentContext),
-          metadata: agentContext.metadata
+          type: 'agent',
+          executorId: this.agent.id,
+          input: {
+            name: 'Process Telegram message',
+            description: JSON.stringify(agentContext),
+            prompt: message,
+            metadata: agentContext.metadata
+          },
+          timeout: 30000,
+          retryConfig: {
+            maxAttempts: 3,
+            backoffMultiplier: 1.5,
+            initialDelay: 1000,
+            maxDelay: 30000
+          }
         });
 
-        const result = await this.agent.execute(task);
-        const agentResponse = result.success ? result.output : null;
+        task.setExecutor(this.agent);
+        const result = await task.execute();
 
-        if (typeof agentResponse === 'string') {
+        // Store interaction in agent's memory
+        await this.agent.memory.add({
+          content: `Message: ${message}\nResponse: ${result.output}`,
+          type: 'conversation',
+          metadata: {
+            chatId: ctx.chat.id,
+            messageId: ctx.message.message_id,
+            userId: ctx.from.id,
+            sentiment,
+            taskResult: result
+          }
+        });
+
+        if (result.status === TaskStatus.COMPLETED && typeof result.output === 'string') {
           await this.sendMessage({
             chatId: ctx.chat.id,
-            text: agentResponse,
+            text: result.output,
             replyToMessageId: ctx.message.message_id
           });
         }
@@ -92,6 +118,7 @@ export class TelegramIntegration {
   }
 
   async initialize(): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       // Set up custom command handlers
       this.commandHandlers.forEach(handler => {
@@ -101,22 +128,32 @@ export class TelegramIntegration {
       });
 
       // Start the bot
-      await this.bot.initialize();
       await this.bot.launch();
 
+      const endTime = new Date();
       return {
-        success: true,
-        data: { message: 'Telegram bot initialized successfully' }
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: { message: 'Telegram bot initialized successfully' },
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to initialize Telegram bot'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to initialize Telegram bot',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
 
   async sendMessage(options: MessageOptions): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const result = await this.bot.telegram.sendMessage(
         options.chatId, 
@@ -127,14 +164,30 @@ export class TelegramIntegration {
         }
       );
 
+      const endTime = new Date();
       return {
-        success: true,
-        data: result
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: result,
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime(),
+        metrics: {
+          tokenCount: options.text.length,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: options.text.length
+        }
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to send Telegram message'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to send Telegram message',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
@@ -144,17 +197,28 @@ export class TelegramIntegration {
   }
 
   async getChatInfo(chatId: number | string): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const chat = await this.bot.telegram.getChat(chatId);
+      const endTime = new Date();
 
       return {
-        success: true,
-        data: chat
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: chat,
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to retrieve chat information'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to retrieve chat information',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
@@ -163,6 +227,7 @@ export class TelegramIntegration {
     offset?: number;
     limit?: number;
   }): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       const photos = await this.bot.telegram.getUserProfilePhotos(
         userId, 
@@ -170,70 +235,130 @@ export class TelegramIntegration {
         options?.limit
       );
 
+      const endTime = new Date();
       return {
-        success: true,
-        data: photos
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: photos,
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to retrieve user profile photos'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to retrieve user profile photos',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
 
   async automate(task: Task): Promise<TaskResult> {
+    const startTime = new Date();
     try {
       // Create enhanced task for automation
       const automationTask = new Task({
-        name: task.name,
-        description: task.description,
-        metadata: {
-          ...task.metadata,
-          type: 'telegram_automation',
-          importance: 0.8, // High importance for automated tasks
-          isConsolidated: false,
-          consolidationScore: 0,
-          isArchived: false
+        type: 'agent',
+        executorId: this.agent.id,
+        input: {
+          name: task.toJSON().name,
+          description: task.toJSON().input.description,
+          prompt: task.toJSON().input.prompt,
+          metadata: {
+            ...task.toJSON().input.metadata,
+            type: 'telegram_automation',
+            importance: 0.8
+          }
+        },
+        timeout: 30000,
+        retryConfig: {
+          maxAttempts: 3,
+          backoffMultiplier: 1.5,
+          initialDelay: 1000,
+          maxDelay: 30000
         }
       });
 
-      const result = await this.agent.execute(automationTask);
+      automationTask.setExecutor(this.agent);
+      const result = await automationTask.execute();
 
-      // Send automated message based on execution result
-      const messageResult = await this.sendMessage({
-        chatId: process.env.DEFAULT_TELEGRAM_CHAT_ID || '',
-        text: typeof result.output === 'string'
-          ? result.output
-          : JSON.stringify(result.output)
+      // Store automation result in memory
+      await this.agent.memory.add({
+        content: `Automation task: ${task.toJSON().name}\nResult: ${result.output}`,
+        type: 'task',
+        metadata: {
+          taskId: task.id,
+          automationType: 'telegram',
+          result
+        }
       });
 
+      // Send automated message based on execution result
+      const messageText = typeof result.output === 'string'
+        ? result.output
+        : JSON.stringify(result.output);
+
+      const messageResult = await this.sendMessage({
+        chatId: process.env.DEFAULT_TELEGRAM_CHAT_ID || '',
+        text: messageText
+      });
+
+      const endTime = new Date();
       return {
-        success: true,
-        data: {
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: {
           taskResult: result,
-          messageSent: messageResult.success
+          messageSent: messageResult.status === TaskStatus.COMPLETED,
+          messageLength: messageText.length
+        },
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime(),
+        metrics: {
+          ...result.metrics
         }
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Telegram automation failed'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Telegram automation failed',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }
 
   async stop(): Promise<TaskResult> {
+    const startTime = new Date();
     try {
-      this.bot.stop();
+      await this.bot.stop();
+      const endTime = new Date();
+      
       return {
-        success: true,
-        data: { message: 'Telegram bot stopped successfully' }
+        id: randomUUID(),
+        status: TaskStatus.COMPLETED,
+        output: { message: 'Telegram bot stopped successfully' },
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     } catch (error) {
+      const endTime = new Date();
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to stop Telegram bot'
+        id: randomUUID(),
+        status: TaskStatus.FAILED,
+        error: error instanceof Error ? error.message : 'Failed to stop Telegram bot',
+        startedAt: startTime,
+        completedAt: endTime,
+        duration: endTime.getTime() - startTime.getTime()
       };
     }
   }

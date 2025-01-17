@@ -34,6 +34,47 @@ The Core Agent System provides the foundational architecture for building, manag
 
 ## 🛠️ Architecture
 
+### Task Architecture
+```typescript
+interface TaskConfig {
+  type: 'agent' | 'swarm';
+  executorId: string;
+  input: {
+    name?: string;
+    description?: string;
+    prompt: string;
+    data?: any;
+    metadata?: Record<string, any>;
+  };
+  timeout?: number;
+  retryConfig?: {
+    maxAttempts: number;
+    backoffMultiplier: number;
+    initialDelay?: number;
+    maxDelay?: number;
+  };
+}
+
+interface TaskResult {
+  id: string;
+  status: TaskStatus;
+  output?: any;
+  error?: string;
+  startedAt: Date;
+  completedAt?: Date;
+  duration?: number;
+  metrics?: {
+    tokenCount?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    cost?: number;
+    retryCount?: number;
+    totalRetryDelay?: number;
+  };
+}
+```
+
 ### Agent Architecture
 ```typescript
 interface Agent {
@@ -49,7 +90,7 @@ interface Agent {
   tools: Tool[];
   
   // Execution
-  execute(task: Task): Promise<Result>;
+  execute(task: Task): Promise<TaskResult>;
   plan(goal: string): Promise<Plan>;
   learn(experience: Experience): Promise<void>;
   
@@ -62,6 +103,22 @@ interface Agent {
 
 ### Swarm Architecture
 ```typescript
+interface SwarmRouterConfig {
+  name?: string;
+  description?: string;
+  agents: AgentInterface[];
+  swarm_type?: 'SequentialWorkflow' | 'CapabilityBased' | 'LoadBalanced' | 'CollaborativeSolving';
+  max_loops?: number;
+  collaboration_threshold?: number;
+  timeout?: number;
+  retryConfig?: {
+    maxAttempts: number;
+    backoffMultiplier: number;
+    initialDelay?: number;
+    maxDelay?: number;
+  };
+}
+
 interface Swarm {
   // Core properties
   id: string;
@@ -74,7 +131,7 @@ interface Swarm {
   coordinator: SwarmCoordinator;
   
   // Operations
-  execute(task: Task): Promise<Result>;
+  execute(task: Task): Promise<TaskResult>;
   addAgent(agent: Agent): Promise<void>;
   removeAgent(agentId: string): Promise<void>;
   
@@ -85,6 +142,35 @@ interface Swarm {
 ```
 
 ## 🔄 Lifecycle Management
+
+### Task Lifecycle
+1. **Creation**
+   ```typescript
+   const task = new Task({
+     type: 'agent',
+     executorId: agent.id,
+     input: {
+       name: 'Process Document',
+       description: 'Extract key information from document',
+       prompt: 'Analyze and summarize the main points'
+     },
+     timeout: 30000,
+     retryConfig: {
+       maxAttempts: 3,
+       backoffMultiplier: 1.5,
+       initialDelay: 1000,
+       maxDelay: 30000
+     }
+   });
+   ```
+
+2. **Execution**
+   ```typescript
+   const result = await task.execute();
+   console.log('Status:', result.status);
+   console.log('Duration:', result.duration);
+   console.log('Metrics:', result.metrics);
+   ```
 
 ### Agent Lifecycle
 1. **Initialization**
@@ -108,10 +194,12 @@ interface Swarm {
    ```typescript
    const result = await agent.execute({
      type: 'research',
-     input: 'Analyze recent AI developments',
-     context: {
-       depth: 'technical',
-       timeframe: 'last 6 months'
+     input: {
+       prompt: 'Analyze recent AI developments',
+       metadata: {
+         depth: 'technical',
+         timeframe: 'last 6 months'
+       }
      }
    });
    ```
@@ -133,8 +221,13 @@ interface Swarm {
      topology: 'hierarchical',
      agents: [agent1, agent2, agent3],
      router: {
-       strategy: 'round-robin',
-       maxConcurrent: 5
+       strategy: 'capability-based',
+       maxConcurrent: 5,
+       timeout: 60000,
+       retryConfig: {
+         maxAttempts: 3,
+         backoffMultiplier: 1.5
+       }
      }
    });
    ```
@@ -143,11 +236,16 @@ interface Swarm {
    ```typescript
    const result = await swarm.execute({
      type: 'complex-research',
-     subtasks: [
-       { type: 'gather', source: 'academic' },
-       { type: 'analyze', method: 'comparative' },
-       { type: 'synthesize', format: 'report' }
-     ]
+     input: {
+       prompt: 'Conduct comprehensive market analysis',
+       metadata: {
+         subtasks: [
+           { type: 'gather', source: 'academic' },
+           { type: 'analyze', method: 'comparative' },
+           { type: 'synthesize', format: 'report' }
+         ]
+       }
+     }
    });
    ```
 
@@ -164,6 +262,29 @@ interface Swarm {
    ```
 
 ## 📊 Monitoring & Analytics
+
+### Task Metrics
+```typescript
+interface TaskMetrics {
+  execution: {
+    duration: number;
+    retryCount: number;
+    totalRetryDelay: number;
+    timeoutCount: number;
+  };
+  resources: {
+    tokenCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    cost: number;
+  };
+  status: {
+    success: boolean;
+    errorType?: string;
+    completionReason?: string;
+  };
+}
+```
 
 ### Agent Metrics
 ```typescript
@@ -203,6 +324,8 @@ interface SwarmMetrics {
     activeAgents: number;
     failureRate: number;
     recoveryTime: number;
+    retryRate: number;
+    timeoutRate: number;
   };
 }
 ```
@@ -233,30 +356,37 @@ interface AuditLog {
   resources: string[];
   outcome: string;
   metadata: Record<string, any>;
+  metrics?: TaskMetrics;
 }
 ```
 
 ## 🚀 Best Practices
 
-1. **Agent Design**
+1. **Task Design**
+   - Clear input definition
+   - Appropriate timeout settings
+   - Proper retry configuration
+   - Error handling strategy
+
+2. **Agent Design**
    - Clear single responsibility
    - Appropriate tool selection
    - Efficient memory usage
    - Proper error handling
 
-2. **Swarm Design**
+3. **Swarm Design**
    - Suitable topology selection
    - Efficient task distribution
    - Proper coordination
    - Resource optimization
 
-3. **Security**
+4. **Security**
    - Principle of least privilege
    - Input validation
    - Output sanitization
    - Proper authentication
 
-4. **Performance**
+5. **Performance**
    - Memory management
    - Resource pooling
    - Request batching
